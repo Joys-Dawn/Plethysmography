@@ -69,13 +69,7 @@ python -m pip install -r requirements.txt
 
 ## Workflow
 
-1. **Normalize filenames** (one-shot, idempotent) — fixes trailing-space and
-   capital-P EDF basenames in `Data/`:
-   ```bash
-   python run.py normalize-filenames
-   ```
-
-2. **Run a single experiment**:
+1. **Run a single experiment**:
    ```bash
    python run.py exp1     # LR vs HR comparison
    python run.py exp2     # chronic FFA vs vehicle
@@ -83,7 +77,7 @@ python -m pip install -r requirements.txt
    python run.py all      # all three in order
    ```
 
-3. **Replay a stage** without re-doing the slow earlier ones:
+2. **Replay a stage** without re-doing the slow earlier ones:
    ```bash
    python run.py preprocess --experiment 1   # only EDF → period CSVs
    python run.py analyze --experiment 1      # CSVs → breathing CSV + apnea xlsx + stats + plots
@@ -91,7 +85,7 @@ python -m pip install -r requirements.txt
    python run.py plots --experiment 1        # only plots
    ```
 
-4. **Custom config** — override any frozen-dataclass field via JSON:
+3. **Custom config** — override any frozen-dataclass field via JSON:
    ```bash
    python run.py exp1 --config my_config.json
    ```
@@ -101,31 +95,3 @@ python -m pip install -r requirements.txt
 ```bash
 python -m pytest plethysmography/tests/ -v
 ```
-
-The end-to-end stats test (`test_stats_runner.py`) requires
-`old_results/breathing_analysis_results.csv` to be present and verifies the
-new pipeline reproduces the old xlsx layout (11 sheets, ~1029 total rows).
-
-## Differences from `old_code/`
-
-These are the intentional behavioral changes — every other stage matches the
-old code byte-for-byte (same lid-detection algorithm, same per-file overrides,
-same apnea threshold formula, same period boundaries):
-
-1. **Sigh threshold** is now derived from the recording's BASELINE breaths
-   rather than the current period's. Implementation: `BaselineCache` is built
-   during pass 1 and consumed by `sigh_detection.compute_sigh_threshold` for
-   every period after Baseline. The Baseline period itself is numerically
-   identical to old behavior; pre-Baseline periods (Habituation) get the
-   baseline-derived threshold by deliberate processing-order choice.
-2. **Ictal binning** is 1 s (was 5 s in `old_code/group_binned_analysis.py`).
-3. **Acclimation** is dropped at the period boundary (0–5 min explicitly
-   excluded); Habituation is exactly 5–15 min, hard upper bound.
-4. **EDF filenames** with trailing spaces and capital `P` are renamed at
-   source instead of worked around in code.
-
-`old_code/` and `old_results/` stay in the repo as the regression baseline.
-
-## License
-
-(internal — Mattis Lab)
