@@ -4,15 +4,31 @@ Aggregate breath metrics for a single (file, period).
 Given:
   - the list of :class:`Breath` for a period,
   - a list of bool sigh flags (same length as breaths),
+  - a list of bool apnea flags (same length as breaths; identifies the
+    apneic breaths that get excluded from the timing means and feed the
+    burden / imputation calculations),
   - the list of :class:`ApneaEvent` for that period,
 
 produce a :class:`BreathMetrics` row matching the column schema of
-``old_results/breathing_analysis_results.csv`` (23 columns).
+``old_results/breathing_analysis_results.csv`` (23 columns) plus six
+project-extension columns (see :class:`BreathMetrics`).
 
 Frequency:
   ``mean_frequency_bpm = (num_breaths / period_duration_s) * 60``
   (matches old code at analyze_data.py:1811-1812 — count-over-duration
   rather than mean of instantaneous 1/Ttot.)
+
+  The ``_no_apnea`` companion is defined as
+  ``60000 / mean_ttot_ms_no_apnea``. This is algebraically identical to
+  ``count(non-apneic) * 60 / sum(non-apneic Ttot in s)`` — i.e. the
+  same count-over-duration formula as the legacy column, but with both
+  the count AND the denominator restricted to non-apneic breaths. It is
+  NOT the same as the legacy column with a smaller numerator: the legacy
+  uses ``period_duration_s`` (which includes apneic seconds, inter-breath
+  gaps, and edge time) whereas the no-apnea column uses only the time
+  actually spent in non-apneic breath cycles. The two columns therefore
+  differ by both apnea exclusion AND denominator definition; they are not
+  comparable as "same metric, different filter".
 
 Variability:
   - ``cov_instant_freq``: SD/mean of instantaneous breathing frequency
@@ -20,17 +36,33 @@ Variability:
   - ``alternate_cov``: mean of |D_n − D_{n+1}| / D_{n+1} for successive
     Ttot values (per old code's "alternate" CoV).
   - ``pif_to_pef_cov``: SD/mean of peak_diff = PEF − PIF.
+
+Apnea extensions:
+  - ``apnea_mean_ms_imputed``: equal to ``apnea_mean_ms`` when ≥1 apnea is
+    detected; otherwise the mean of the longest min(10, n) Ttot values
+    in the period (a defensible "worst-breath" proxy that keeps every
+    trace in the comparison even when no formal apneas were detected).
+  - ``apnea_burden_ms_per_min``: total time spent in detected apneas
+    expressed per minute of period duration. Always uses the *real*
+    apnea durations (no imputation).
 """
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional, Sequence
 
 import numpy as np
 
 from ..core.data_models import ApneaEvent, BreathMetrics
 from .apnea_detection import split_apnea_counts
 from .breath_segmentation import Breath
+
+
+# Number of longest-Ttot breaths averaged when imputing apnea_mean_ms for
+# 0-apnea traces. Per project request: small enough that the imputed value
+# typically lands < 400 ms (the apnea floor), preserving the directionality
+# of the comparison while keeping the trace in the analysis.
+_IMPUTATION_TOP_K = 10
 
 
 def compute_breath_metrics(
@@ -40,12 +72,21 @@ def compute_breath_metrics(
     breaths: List[Breath],
     is_sigh: List[bool],
     apneas: List[ApneaEvent],
+    *,
+    is_apnea: Optional[Sequence[bool]] = None,
 ) -> BreathMetrics:
     """Aggregate per-breath data into a single :class:`BreathMetrics` row."""
     n = len(breaths)
 
     if n == 0:
         return _empty_metrics(file_basename, period_name, period_duration_s)
+
+    if is_apnea is None:
+        is_apnea = [False] * n
+    elif len(is_apnea) != n:
+        raise ValueError(
+            f"is_apnea has length {len(is_apnea)} but breaths has length {n}"
+        )
 
     ti = np.array([b.ti_ms for b in breaths], dtype=float)
     te = np.array([b.te_ms for b in breaths], dtype=float)
@@ -54,6 +95,8 @@ def compute_breath_metrics(
     pef_c = np.array([b.pef_centered for b in breaths], dtype=float)
     peak_diff = np.array([b.peak_diff for b in breaths], dtype=float)
     tv = np.array([b.tv_ml for b in breaths], dtype=float)
+    apnea_mask = np.array(is_apnea, dtype=bool)
+    non_apnea_mask = ~apnea_mask
 
     # Counts -> per-minute rates
     sigh_count = int(sum(1 for s in is_sigh if s))
@@ -106,6 +149,36 @@ def compute_breath_metrics(
     else:
         pif_to_pef_cov = float("nan")
 
+    # Project extensions: timing means with apneic breaths excluded.
+    ti_no_ap = ti[non_apnea_mask]
+    te_no_ap = te[non_apnea_mask]
+    ttot_no_ap = ttot[non_apnea_mask]
+    mean_ti_no_apnea = float(np.mean(ti_no_ap)) if ti_no_ap.size > 0 else float("nan")
+    mean_te_no_apnea = float(np.mean(te_no_ap)) if te_no_ap.size > 0 else float("nan")
+    mean_ttot_no_apnea = float(np.mean(ttot_no_ap)) if ttot_no_ap.size > 0 else float("nan")
+    if ttot_no_ap.size > 0 and mean_ttot_no_apnea > 0:
+        mean_freq_no_apnea = 60000.0 / mean_ttot_no_apnea
+    else:
+        mean_freq_no_apnea = float("nan")
+
+    # Project extension: imputed apnea mean for 0-apnea traces.
+    if apnea_durations.size > 0:
+        apnea_mean_imputed = float(np.mean(apnea_durations))
+    else:
+        finite_ttot = ttot[np.isfinite(ttot)]
+        if finite_ttot.size == 0:
+            apnea_mean_imputed = float("nan")
+        else:
+            k = min(_IMPUTATION_TOP_K, finite_ttot.size)
+            top_k = np.sort(finite_ttot)[-k:]
+            apnea_mean_imputed = float(np.mean(top_k))
+
+    # Project extension: apnea burden (ms of detected apnea per minute of period).
+    if period_duration_s > 0 and apnea_durations.size > 0:
+        apnea_burden = float(np.sum(apnea_durations)) * 60.0 / period_duration_s
+    else:
+        apnea_burden = 0.0
+
     return BreathMetrics(
         file_basename=file_basename,
         period=period_name,
@@ -130,6 +203,12 @@ def compute_breath_metrics(
         apnea_spont_mean_ms=float(np.mean(apnea_spont_durations)) if apnea_spont_durations.size > 0 else float("nan"),
         apnea_postsigh_rate_per_min=apnea_post_rate,
         apnea_postsigh_mean_ms=float(np.mean(apnea_post_durations)) if apnea_post_durations.size > 0 else float("nan"),
+        mean_ttot_ms_no_apnea=mean_ttot_no_apnea,
+        mean_frequency_bpm_no_apnea=mean_freq_no_apnea,
+        mean_ti_ms_no_apnea=mean_ti_no_apnea,
+        mean_te_ms_no_apnea=mean_te_no_apnea,
+        apnea_mean_ms_imputed=apnea_mean_imputed,
+        apnea_burden_ms_per_min=apnea_burden,
     )
 
 
@@ -159,4 +238,10 @@ def _empty_metrics(file_basename: str, period_name: str, period_duration_s: floa
         apnea_spont_mean_ms=nan,
         apnea_postsigh_rate_per_min=0.0,
         apnea_postsigh_mean_ms=nan,
+        mean_ttot_ms_no_apnea=nan,
+        mean_frequency_bpm_no_apnea=nan,
+        mean_ti_ms_no_apnea=nan,
+        mean_te_ms_no_apnea=nan,
+        apnea_mean_ms_imputed=nan,
+        apnea_burden_ms_per_min=0.0,
     )

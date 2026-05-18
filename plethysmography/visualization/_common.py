@@ -26,11 +26,29 @@ import matplotlib.pyplot as plt
 # and the ``Timeseries_*`` filenames in old_results/Publication_Plots/.
 #
 # parameter_csv_column -> (display_label, filename_slug)
+#
+# Both the legacy column keys (used by binned_plots, which compute per-bin
+# values from raw signal) and the project-extension keys (``*_no_apnea``,
+# ``apnea_mean_ms_imputed``, ``apnea_burden_ms_per_min``) resolve to the
+# same human-facing labels and slugs. They live in different output
+# directories (``Postictal_Binned/`` vs ``Within each time period/``), so
+# matching slugs do not collide on disk and the axis label reads cleanly
+# in both cases.
 _PARAM_DISPLAY: Dict[str, Tuple[str, str]] = {
-    "mean_ttot_ms":              ("Ttot (ms)",            "Ttot_ms"),
-    "mean_frequency_bpm":        ("Frequency (bpm)",      "Frequency_bpm"),
-    "mean_ti_ms":                ("Ti (ms)",              "Ti_ms"),
-    "mean_te_ms":                ("Te (ms)",              "Te_ms"),
+    # Timing — legacy and no-apnea share labels.
+    "mean_ttot_ms":                ("Ttot (ms)",       "Ttot_ms"),
+    "mean_ttot_ms_no_apnea":       ("Ttot (ms)",       "Ttot_ms"),
+    "mean_frequency_bpm":          ("Frequency (bpm)", "Frequency_bpm"),
+    "mean_frequency_bpm_no_apnea": ("Frequency (bpm)", "Frequency_bpm"),
+    "mean_ti_ms":                  ("Ti (ms)",         "Ti_ms"),
+    "mean_ti_ms_no_apnea":         ("Ti (ms)",         "Ti_ms"),
+    "mean_te_ms":                  ("Te (ms)",         "Te_ms"),
+    "mean_te_ms_no_apnea":         ("Te (ms)",         "Te_ms"),
+    # Apnea duration — legacy and imputed share label; burden is its own.
+    "apnea_mean_ms":             ("Apnea duration (ms)",  "Apnea_duration_ms"),
+    "apnea_mean_ms_imputed":     ("Apnea duration (ms)",  "Apnea_duration_ms"),
+    "apnea_burden_ms_per_min":   ("Apnea burden (ms/min)", "Apnea_burden_ms_per_min"),
+    # Unchanged columns
     "mean_pif_centered_ml_s":    ("PIF (mL/s)",           "PIF_mL_s"),
     "mean_pef_centered_ml_s":    ("PEF (mL/s)",           "PEF_mL_s"),
     "mean_pif_to_pef_ml_s":      ("PIF-to-PEF (mL/s)",    "PIF_to_PEF_mL_s"),
@@ -41,7 +59,6 @@ _PARAM_DISPLAY: Dict[str, Tuple[str, str]] = {
     "alternate_cov":             ("CoV",                  "CoV_alternate"),
     "pif_to_pef_cov":            ("CoV (PIF-to-PEF)",     "CoV_PIF_to_PEF"),
     "apnea_rate_per_min":        ("Apnea rate (/min)",    "Apnea_rate__min"),
-    "apnea_mean_ms":             ("Apnea duration (ms)",  "Apnea_duration_ms"),
 }
 
 
@@ -110,7 +127,12 @@ def global_ylim(
 
     if not all_values:
         return None
-    if parameter == "apnea_mean_ms" and has_nan:
+    # Anchor y at 0 for apnea-flavored parameters (rate / imputed mean /
+    # burden): zero is the natural baseline and the eye expects it. The
+    # legacy ``apnea_mean_ms`` retains its original "anchor at zero only
+    # when NaN dropouts exist" behavior so the regression plots match.
+    _zero_anchored = {"apnea_mean_ms_imputed", "apnea_burden_ms_per_min"}
+    if parameter in _zero_anchored or (parameter == "apnea_mean_ms" and has_nan):
         y_min, y_max = 0.0, float(max(all_values))
     else:
         y_min, y_max = float(min(all_values)), float(max(all_values))

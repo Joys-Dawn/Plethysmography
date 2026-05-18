@@ -36,6 +36,7 @@ from ..core.data_models import (
     BaselineCache,
     BASELINE,
     BreathMetrics,
+    ICTAL,
     PERIOD_NAMES,
     Period,
     Recording,
@@ -56,10 +57,18 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 @dataclass
 class PeriodAnalysisResult:
-    """Output of analyzing a single (file, period)."""
+    """Output of analyzing a single (file, period).
+
+    ``is_apnea`` is parallel to ``breaths`` — True for breaths whose Ttot
+    crossed the apnea threshold (same predicate as
+    :func:`plethysmography.analysis.apnea_detection.detect_apneas`). Exposed
+    here so callers (e.g. the ictal-histogram emitter) don't have to
+    re-derive it.
+    """
     metrics: BreathMetrics
     apneas: List[ApneaEvent]
     breaths: List[Breath]
+    is_apnea: List[bool]
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +155,17 @@ def analyze_period(
         period_start_time=period.period_start_time,
         lid_closure_time=period.lid_closure_time if np.isfinite(period.lid_closure_time) else period.period_start_time,
     )
+    # Per-breath apnea flags drive the *_no_apnea timing means and the
+    # imputation / burden extensions in compute_breath_metrics. An apnea is
+    # exactly a breath whose Ttot crosses the (cache-or-period-derived)
+    # threshold, matching the same predicate used inside detect_apneas.
+    if apnea_threshold is None:
+        is_apnea = [False] * len(breaths)
+    else:
+        is_apnea = [
+            bool(np.isfinite(b.ttot_ms) and b.ttot_ms >= apnea_threshold)
+            for b in breaths
+        ]
     metrics = compute_breath_metrics(
         file_basename=file_basename,
         period_name=period.name,
@@ -153,8 +173,11 @@ def analyze_period(
         breaths=breaths,
         is_sigh=is_sigh,
         apneas=apneas,
+        is_apnea=is_apnea,
     )
-    return PeriodAnalysisResult(metrics=metrics, apneas=apneas, breaths=breaths)
+    return PeriodAnalysisResult(
+        metrics=metrics, apneas=apneas, breaths=breaths, is_apnea=is_apnea,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +190,7 @@ def analyze_recording(
     *,
     interactive_dir: Optional[Path] = None,
     apneas_for_interactive: bool = True,
+    ictal_histograms_dir: Optional[Path] = None,
 ) -> Tuple[List[BreathMetrics], List[ApneaEvent], Dict[str, List[Breath]]]:
     """Analyze every Period of one recording, two-pass.
 
@@ -181,6 +205,11 @@ def analyze_recording(
     ``<basename>_<period>_interactive_breaths.html`` per period (the breath-
     segmentation plotly view), with apnea bars when ``apneas_for_interactive``
     is True.
+
+    When ``ictal_histograms_dir`` is given, also writes a per-recording PNG
+    (Ttot + PIF-to-PEF histograms of the Ictal period) and a per-breath CSV
+    of the Ictal breaths to that directory. Only the Ictal period is dumped
+    because the user-facing CoV story focuses on that period.
 
     Returns:
         (list of BreathMetrics rows, list of ApneaEvent rows, dict period_name -> breaths)
@@ -244,6 +273,17 @@ def analyze_recording(
             period_name=period.name,
         )
 
+    def _maybe_emit_ictal_histograms(period_name: str, result: PeriodAnalysisResult) -> None:
+        if ictal_histograms_dir is None or period_name != ICTAL:
+            return
+        from ..visualization.ictal_histograms import emit_ictal_histograms
+        emit_ictal_histograms(
+            file_basename=recording.file_basename,
+            breaths=result.breaths,
+            is_apnea=result.is_apnea,
+            output_dir=Path(ictal_histograms_dir),
+        )
+
     for name in PERIOD_NAMES:
         if name == BASELINE:
             if baseline_result is not None:
@@ -266,6 +306,7 @@ def analyze_recording(
         apnea_rows.extend(result.apneas)
         breaths_by_period[name] = result.breaths
         _maybe_emit_interactive(period, result)
+        _maybe_emit_ictal_histograms(name, result)
 
     return metrics_rows, apnea_rows, breaths_by_period
 
@@ -279,6 +320,7 @@ def analyze_experiment(
     config: PlethConfig,
     *,
     interactive_dir: Optional[str | Path] = None,
+    ictal_histograms_dir: Optional[str | Path] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Load preprocessed CSVs from ``preprocessed_dir`` and run the two-pass
     breath analysis for every recording in ``recordings``.
@@ -286,11 +328,17 @@ def analyze_experiment(
     When ``interactive_dir`` is given, also writes the per-(file, period)
     plotly HTML trace plots used for visual QC of breath segmentation.
 
+    When ``ictal_histograms_dir`` is given, emits a per-recording ictal
+    Ttot/PIF-to-PEF histogram PNG plus a per-breath CSV (see
+    :mod:`plethysmography.visualization.ictal_histograms`).
+
     Returns ``(breathing_df, apnea_df)`` ready to write to disk. The breathing
-    DataFrame's column order matches old_results/breathing_analysis_results.csv.
+    DataFrame's column order matches old_results/breathing_analysis_results.csv
+    plus the project-extension columns appended at the end.
     """
     preprocessed_dir = Path(preprocessed_dir)
     interactive_path = Path(interactive_dir) if interactive_dir is not None else None
+    histograms_path = Path(ictal_histograms_dir) if ictal_histograms_dir is not None else None
     by_basename = {r.file_basename: r for r in recordings}
 
     # Group all *.csv in the preprocessed dir by basename + period.
@@ -321,6 +369,7 @@ def analyze_experiment(
         m_rows, a_rows, _ = analyze_recording(
             recording, periods, config,
             interactive_dir=interactive_path,
+            ictal_histograms_dir=histograms_path,
         )
         metrics_rows.extend(m_rows)
         apnea_rows.extend(a_rows)
@@ -353,6 +402,11 @@ _METRICS_COLUMNS: Tuple[str, ...] = (
     "apnea_rate_per_min", "apnea_mean_ms",
     "apnea_spont_rate_per_min", "apnea_spont_mean_ms",
     "apnea_postsigh_rate_per_min", "apnea_postsigh_mean_ms",
+    # Project extensions (kept after the legacy schema so old_results
+    # regression diff stays clean column-position-wise).
+    "mean_ttot_ms_no_apnea", "mean_frequency_bpm_no_apnea",
+    "mean_ti_ms_no_apnea", "mean_te_ms_no_apnea",
+    "apnea_mean_ms_imputed", "apnea_burden_ms_per_min",
 )
 
 _APNEA_COLUMNS: Tuple[str, ...] = (

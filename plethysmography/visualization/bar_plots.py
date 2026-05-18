@@ -148,6 +148,12 @@ def _draw_across(
             & (p22_data[condition_col].astype(str) == cond)
         )
         sub = p22_data.loc[mask, parameter]
+        # Legacy fallback for plain ``apnea_mean_ms``: 0-apnea traces are
+        # plotted as grey markers at y=0. With the default plot list now
+        # using ``apnea_mean_ms_imputed`` (no NaNs by construction), this
+        # branch is unreachable through normal pipeline runs but kept so
+        # callers explicitly passing ``parameter="apnea_mean_ms"`` still
+        # render correctly.
         if parameter == "apnea_mean_ms":
             valid = sub.dropna()
             nan_count = sub.isna().sum()
@@ -229,6 +235,7 @@ def _draw_within(
         marker = MARKERS_BY_AGE.get(int(age), "o")
         color = HR_BAR_PALETTE.get((gen, int(age)), "#6b7280")
 
+        # Legacy fallback for plain ``apnea_mean_ms``; see _draw_across.
         if parameter == "apnea_mean_ms":
             valid = sub.dropna()
             nan_count = int(sub.isna().sum())

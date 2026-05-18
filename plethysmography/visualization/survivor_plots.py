@@ -47,11 +47,13 @@ _SUDEP_COLOR = "#FF0000"
 _MARKER = "^"     # all subjects are P19
 
 _PARAMETERS = (
-    "mean_ttot_ms", "mean_frequency_bpm", "mean_ti_ms", "mean_te_ms",
+    "mean_ttot_ms_no_apnea", "mean_frequency_bpm_no_apnea",
+    "mean_ti_ms_no_apnea", "mean_te_ms_no_apnea",
     "mean_pif_centered_ml_s", "mean_pef_centered_ml_s", "mean_pif_to_pef_ml_s",
     "mean_tv_ml", "sigh_rate_per_min", "mean_sigh_duration_ms",
     "cov_instant_freq", "alternate_cov", "pif_to_pef_cov",
-    "apnea_rate_per_min", "apnea_mean_ms",
+    "apnea_rate_per_min", "apnea_mean_ms_imputed",
+    "apnea_burden_ms_per_min",
 )
 
 _FIG_SIZE_STRIP = (7, 10)
@@ -122,7 +124,8 @@ def _ylim_across_periods(data: pd.DataFrame, parameter: str) -> Optional[Tuple[f
             has_nan = True
     if not values:
         return None
-    if parameter == "apnea_mean_ms" and has_nan:
+    _zero_anchored = {"apnea_mean_ms_imputed", "apnea_burden_ms_per_min"}
+    if parameter in _zero_anchored or (parameter == "apnea_mean_ms" and has_nan):
         y_min, y_max = 0.0, float(max(values))
     else:
         y_min, y_max = float(min(values)), float(max(values))
@@ -162,6 +165,10 @@ def _draw_within_period(
     )
 
     for i, (_label, color, raw) in enumerate(cells):
+        # Legacy fallback for plain ``apnea_mean_ms``: 0-apnea traces are
+        # plotted as grey markers at y=0. The default plot list now uses
+        # ``apnea_mean_ms_imputed`` (no NaNs by construction); this branch
+        # remains so callers passing the legacy column still render.
         if parameter == "apnea_mean_ms":
             valid = raw.dropna()
             nan_count = int(raw.isna().sum())

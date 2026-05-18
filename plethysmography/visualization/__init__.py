@@ -19,6 +19,11 @@ from .colors import (
 from .bar_plots import plot_within_period
 from .timeseries_plots import plot_across_periods
 from .binned_plots import plot_postictal_binned, plot_ictal_binned
+from .ictal_histograms import (
+    emit_ictal_histograms,
+    plot_ictal_histograms,
+    write_ictal_breaths_csv,
+)
 from .interactive_plots import plot_breath_segmentation
 from .trace_plots import plot_lid_spikes, plot_periods_overlay
 from .publication_plots import (
@@ -41,6 +46,9 @@ __all__ = [
     "plot_across_periods",
     "plot_postictal_binned",
     "plot_ictal_binned",
+    "emit_ictal_histograms",
+    "plot_ictal_histograms",
+    "write_ictal_breaths_csv",
     "plot_breath_segmentation",
     "plot_lid_spikes",
     "plot_periods_overlay",

@@ -50,6 +50,12 @@ _FREE_COLUMNS = {
     "apnea_rate_per_min", "apnea_mean_ms",
     "apnea_spont_rate_per_min", "apnea_spont_mean_ms",
     "apnea_postsigh_rate_per_min", "apnea_postsigh_mean_ms",
+    # Project-extension columns: not in the legacy CSV, but listed for
+    # safety so a manual diff that adds them anywhere doesn't tighten this
+    # test by accident.
+    "mean_ttot_ms_no_apnea", "mean_frequency_bpm_no_apnea",
+    "mean_ti_ms_no_apnea", "mean_te_ms_no_apnea",
+    "apnea_mean_ms_imputed", "apnea_burden_ms_per_min",
 }
 
 

@@ -66,6 +66,7 @@ def run(
 
     traces_dir = results_dir / "trace_plots"
     interactive_dir = results_dir / "interactive"
+    ictal_histograms_dir = results_dir / "Ictal_Histograms"
 
     if do_preprocess:
         recordings = preprocess_all(
@@ -79,6 +80,7 @@ def run(
         breathing_df, apnea_df = analyze_all(
             recordings, config, preprocessed_dir,
             interactive_dir=interactive_dir,
+            ictal_histograms_dir=ictal_histograms_dir,
         )
         write_breathing_outputs(breathing_df, apnea_df, results_dir)
     elif (results_dir / "breathing_analysis_results.csv").exists():

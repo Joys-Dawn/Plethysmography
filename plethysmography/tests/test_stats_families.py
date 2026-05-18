@@ -1,14 +1,22 @@
 """
 Test that the parameter→category mapping has the right shape: every parameter
-listed in :func:`define_parameter_categories` is a valid old-CSV column, and
-the inverse lookup is consistent.
+listed in :func:`define_parameter_categories` exists as a field on the current
+:class:`BreathMetrics` dataclass (the source of truth for the breathing CSV
+schema), and the inverse lookup is consistent.
+
+Note: the old regression CSV is not the source of truth for parameter names
+anymore — the project introduced the ``*_no_apnea`` / ``_imputed`` extension
+columns which are absent from the legacy CSV. The dataclass is the canonical
+schema, so we validate against it.
 """
 
 from __future__ import annotations
 
-import pandas as pd
+from dataclasses import fields
+
 import pytest
 
+from plethysmography.core.data_models import BreathMetrics
 from plethysmography.stats.families import (
     define_parameter_categories,
     get_parameter_to_category,
@@ -33,14 +41,35 @@ def test_inverse_mapping_is_consistent():
             assert inverse[p] == cat, f"{p} should map to {cat}, got {inverse[p]}"
 
 
-def test_parameters_present_in_old_csv(tmp_path):
-    """Skip if the regression CSV isn't in the working directory."""
-    import os
-    if not os.path.exists("old_results/breathing_analysis_results.csv"):
-        pytest.skip("old_results CSV not present")
-    df = pd.read_csv("old_results/breathing_analysis_results.csv")
+def test_parameters_present_in_breath_metrics_schema():
+    """Every category parameter must be a field of :class:`BreathMetrics`."""
+    valid = {f.name for f in fields(BreathMetrics)}
     cats = define_parameter_categories()
     missing = [
-        p for params in cats.values() for p in params if p not in df.columns
+        p for params in cats.values() for p in params if p not in valid
     ]
-    assert not missing, f"Stats parameters missing from breathing CSV: {missing}"
+    assert not missing, (
+        f"Stats parameters missing from BreathMetrics dataclass: {missing}"
+    )
+
+
+def test_extension_columns_are_in_their_expected_categories():
+    """Lock in the project's extension column → family wiring so a future
+    accidental edit to families.py won't silently regress the experimental
+    setup."""
+    inverse = get_parameter_to_category()
+    assert inverse["mean_ti_ms_no_apnea"] == "Timing"
+    assert inverse["mean_te_ms_no_apnea"] == "Timing"
+    assert inverse["mean_ttot_ms_no_apnea"] == "Timing"
+    assert inverse["mean_frequency_bpm_no_apnea"] == "Timing"
+    assert inverse["apnea_mean_ms_imputed"] == "Pauses_duration"
+    assert inverse["apnea_burden_ms_per_min"] == "Pauses_duration"
+    # And the legacy columns must NOT be in any FDR family (otherwise they
+    # would compete for the same correction with their replacements).
+    for legacy in (
+        "mean_ti_ms", "mean_te_ms", "mean_ttot_ms", "mean_frequency_bpm",
+        "apnea_mean_ms",
+    ):
+        assert legacy not in inverse, (
+            f"{legacy} should not be in any FDR family — its replacement is."
+        )

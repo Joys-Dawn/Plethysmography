@@ -123,9 +123,20 @@ class Period:
 class BreathMetrics:
     """One row's worth of breath-summary statistics for (file, period).
 
-    Field names match old_results/breathing_analysis_results.csv columns exactly
-    so the regression test compares like-for-like. The output CSV is written by
-    serializing a list[BreathMetrics] in this column order.
+    The original 23 fields preserve the exact schema of
+    ``old_results/breathing_analysis_results.csv`` so the regression test
+    compares like-for-like. The trailing 6 fields (``*_no_apnea``,
+    ``apnea_mean_ms_imputed``, ``apnea_burden_ms_per_min``) are project
+    extensions added to: (a) recover statistical power for the apnea-duration
+    comparison by imputing a top-Ttot proxy when no apneas are detected,
+    (b) report aggregate apnea burden, and (c) report respiratory timing with
+    apneic breaths excluded so the means / frequency are not skewed by long
+    apneic cycles.
+
+    The output CSV is written by serializing a list[BreathMetrics] in this
+    column order; downstream stats and plots reference the ``*_no_apnea`` /
+    ``_imputed`` columns by default, while the originals stay in the CSV for
+    transparency / audit.
     """
     file_basename: str
     period: str
@@ -150,6 +161,13 @@ class BreathMetrics:
     apnea_spont_mean_ms: float
     apnea_postsigh_rate_per_min: float
     apnea_postsigh_mean_ms: float
+    # --- Project extensions (see class docstring) -------------------------
+    mean_ttot_ms_no_apnea: float = float("nan")
+    mean_frequency_bpm_no_apnea: float = float("nan")
+    mean_ti_ms_no_apnea: float = float("nan")
+    mean_te_ms_no_apnea: float = float("nan")
+    apnea_mean_ms_imputed: float = float("nan")
+    apnea_burden_ms_per_min: float = 0.0
 
 
 @dataclass

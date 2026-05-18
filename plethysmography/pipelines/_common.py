@@ -125,11 +125,13 @@ def analyze_all(
     preprocessed_dir: Path,
     *,
     interactive_dir: Path | None = None,
+    ictal_histograms_dir: Path | None = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Wrap :func:`plethysmography.analysis.pipeline.analyze_experiment`."""
     return analyze_experiment(
         list(recordings), preprocessed_dir, config,
         interactive_dir=interactive_dir,
+        ictal_histograms_dir=ictal_histograms_dir,
     )
 
 
