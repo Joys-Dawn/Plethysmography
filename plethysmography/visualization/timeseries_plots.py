@@ -17,7 +17,7 @@ connecting line and error bars on top. Filenames mirror
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -63,10 +63,16 @@ def plot_across_periods(
     output_dir: Path,
     *,
     condition_col: str = "risk_clean",
+    palette: Optional[Dict[Tuple[str, str], str]] = None,
 ) -> Optional[Path]:
     """Generate ``_across`` and ``_within`` timeseries plots for one parameter.
     Returns the path to ``_across`` (or ``_within`` if P22 cohort is empty;
-    ``None`` if both are empty)."""
+    ``None`` if both are empty).
+
+    ``palette`` is only consulted by the ``condition_col == "treatment_clean"``
+    branch of ``_draw_across`` (acute vs chronic visual differentiation);
+    risk-cohort and within plots ignore it.
+    """
     output_dir = Path(output_dir)
     out_path: Optional[Path] = None
 
@@ -76,6 +82,7 @@ def plot_across_periods(
         out_path = _draw_across(
             p22, parameter, condition_col=condition_col,
             output_path=output_dir / f"Timeseries_{filename_slug(parameter)}_across.png",
+            palette=palette,
         )
 
     # ---- within (high-risk / FFA-cohort, P19 vs P22) ------------------------
@@ -158,14 +165,18 @@ def _draw_across(
     *,
     condition_col: str,
     output_path: Path,
+    palette: Optional[Dict[Tuple[str, str], str]] = None,
 ) -> Optional[Path]:
     if condition_col == "treatment_clean":
         # across is P22-only; full 3-feature label genotype -> P22 -> drug.
+        # exp3 (acute) injects ACUTE_FFA_PALETTE via the palette kwarg;
+        # exp2 (chronic) leaves palette=None and gets TREATMENT_PALETTE.
+        eff_palette = palette or TREATMENT_PALETTE
         groups = [
-            (group_label("WT", 22, treatment_word("Vehicle")),       "WT",  "Vehicle", TREATMENT_PALETTE[("WT",  "Vehicle")], "o"),
-            (group_label("WT", 22, treatment_word("FFA")),           "WT",  "FFA",     TREATMENT_PALETTE[("WT",  "FFA")],     "o"),
-            (group_label("Scn1a+/-", 22, treatment_word("Vehicle")), "het", "Vehicle", TREATMENT_PALETTE[("het", "Vehicle")], "o"),
-            (group_label("Scn1a+/-", 22, treatment_word("FFA")),     "het", "FFA",     TREATMENT_PALETTE[("het", "FFA")],     "o"),
+            (group_label("WT", 22, treatment_word("Vehicle")),       "WT",  "Vehicle", eff_palette[("WT",  "Vehicle")], "o"),
+            (group_label("WT", 22, treatment_word("FFA")),           "WT",  "FFA",     eff_palette[("WT",  "FFA")],     "o"),
+            (group_label("Scn1a+/-", 22, treatment_word("Vehicle")), "het", "Vehicle", eff_palette[("het", "Vehicle")], "o"),
+            (group_label("Scn1a+/-", 22, treatment_word("FFA")),     "het", "FFA",     eff_palette[("het", "FFA")],     "o"),
         ]
     else:
         groups = [

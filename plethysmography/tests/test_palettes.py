@@ -13,6 +13,7 @@ from __future__ import annotations
 from plethysmography.visualization.binned_plots import (
     _RISK_GROUPS,
     _TREATMENT_GROUPS,
+    _build_treatment_groups,
 )
 from plethysmography.visualization.colors import (
     ACUTE_FFA_PALETTE,
@@ -87,3 +88,39 @@ def test_binned_risk_groups_unchanged_against_default_palette():
             f"{label}: {color} != palette[{(genotype, condition)}]"
         )
         assert marker == "o"
+
+
+# ---------------------------------------------------------------------------
+# Exp3 palette-kwarg wiring: the _build_treatment_groups helper must
+# byte-for-byte preserve chronic colors when given TREATMENT_PALETTE, and
+# must produce the locked acute colors when given ACUTE_FFA_PALETTE.
+# ---------------------------------------------------------------------------
+def test_build_treatment_groups_default_matches_module_constant():
+    """Regression: ``_build_treatment_groups(TREATMENT_PALETTE)`` must equal
+    the module-level ``_TREATMENT_GROUPS`` byte-for-byte. The constant is
+    set at import time via this helper, so this pins the chronic colors and
+    catches any drift between the helper and the historical tuple shape.
+    """
+    assert _build_treatment_groups(TREATMENT_PALETTE) == _TREATMENT_GROUPS
+
+
+def test_build_treatment_groups_acute_carries_acute_palette_colors():
+    """``_build_treatment_groups(ACUTE_FFA_PALETTE)`` must carry the pink
+    FFA colors (``#FFB6C1`` / ``#C71585``) and the shared gray Vehicle
+    colors (``#D3D3D3`` / ``#696969``). Tuple ordering matches the chronic
+    builder so plot consumers can swap the palette without reordering."""
+    acute_groups = _build_treatment_groups(ACUTE_FFA_PALETTE)
+    by_key = {(genotype, treatment): color
+              for _label, genotype, treatment, color, _marker in acute_groups}
+    assert by_key == {
+        ("WT", "Vehicle"): "#D3D3D3",
+        ("WT", "FFA"): "#FFB6C1",
+        ("het", "Vehicle"): "#696969",
+        ("het", "FFA"): "#C71585",
+    }
+    # Labels and markers stay identical to chronic — only the colors change.
+    for chronic, acute in zip(_TREATMENT_GROUPS, acute_groups):
+        assert chronic[0] == acute[0], "label changed under palette swap"
+        assert chronic[1] == acute[1], "genotype key changed under palette swap"
+        assert chronic[2] == acute[2], "treatment key changed under palette swap"
+        assert chronic[4] == acute[4] == "o", "marker changed under palette swap"

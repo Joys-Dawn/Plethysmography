@@ -71,12 +71,20 @@ def generate_publication_plots(
     ictal_period_data: Optional[Sequence[Tuple[str, np.ndarray, np.ndarray, float]]] = None,
     metadata_for_bins: Optional[Dict[str, Dict[str, str]]] = None,
     baseline_median_ttot_ms: Optional[Dict[str, float]] = None,
+    palette: Optional[Dict[Tuple[str, str], str]] = None,
 ) -> Dict[str, List[Path]]:
     """Generate the standard publication plot bundle. ``breathing_df`` should
     already have the cleaned grouping columns (``genotype_clean``,
     ``risk_clean`` / ``treatment_clean``, ``age_clean``); use
     :func:`plethysmography.stats.helpers.prepare_breathing_data` to produce
     them. Returns ``{plot_kind: [path, ...]}``.
+
+    ``palette`` is forwarded to the four ``treatment_clean``-aware drivers
+    (``plot_within_period``, ``plot_across_periods``,
+    ``plot_postictal_binned``, ``plot_ictal_binned``). It is only consulted
+    inside their ``condition_col == "treatment_clean"`` branches; with
+    ``palette=None`` the chronic ``TREATMENT_PALETTE`` default is preserved
+    byte-for-byte (exp2). Exp3 (acute) passes ``palette=ACUTE_FFA_PALETTE``.
     """
     output_dir = Path(output_dir)
     if parameters is None:
@@ -97,6 +105,7 @@ def generate_publication_plots(
                 condition_col=condition_col,
                 display_period=_PERIOD_DISPLAY[period],
                 ylim=ylim,
+                palette=palette,
             )
             if path is not None:
                 saved["within"].append(path)
@@ -117,6 +126,7 @@ def generate_publication_plots(
         path = plot_across_periods(
             breathing_df, param, across_dir,
             condition_col=condition_col,
+            palette=palette,
         )
         if path is not None:
             saved["timeseries"].append(path)
@@ -127,6 +137,7 @@ def generate_publication_plots(
             output_dir / "Postictal_Binned",
             condition_col=condition_col,
             baseline_median_ttot_ms=baseline_median_ttot_ms,
+            palette=palette,
         )
     if ictal_period_data is not None and metadata_for_bins is not None:
         saved["ictal"] = plot_ictal_binned(
@@ -134,6 +145,7 @@ def generate_publication_plots(
             output_dir / "Ictal_Binned",
             condition_col=condition_col,
             baseline_median_ttot_ms=baseline_median_ttot_ms,
+            palette=palette,
         )
     return saved
 

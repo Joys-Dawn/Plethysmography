@@ -17,7 +17,7 @@ exactly: ``<Period>_<param_slug>_within.png`` and ``..._across.png``.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -63,6 +63,7 @@ def plot_within_period(
     condition_col: str = "risk_clean",
     display_period: Optional[str] = None,
     ylim: Optional[tuple] = None,
+    palette: Optional[Dict[Tuple[str, str], str]] = None,
 ) -> Optional[Path]:
     """Generate the standard pair of plots for one (period, parameter):
 
@@ -93,6 +94,7 @@ def plot_within_period(
             output_path=output_dir / f"{display_period}_{filename_slug(parameter)}_across.png",
             condition_col=condition_col,
             ylim=ylim,
+            palette=palette,
         )
 
     # ---- within (HR / FFA-cohort, P19 vs P22) ------------------------------
@@ -124,9 +126,15 @@ def _draw_across(
     output_path: Path,
     condition_col: str,
     ylim: Optional[tuple] = None,
+    palette: Optional[Dict[Tuple[str, str], str]] = None,
 ) -> Optional[Path]:
     """``create_across_plot``-equivalent. P22 mice, four cells along the
-    genotype x condition axis. All markers are circles."""
+    genotype x condition axis. All markers are circles.
+
+    ``palette`` only fires inside the ``condition_col == "treatment_clean"``
+    branch (acute vs chronic visual differentiation); risk-cohort plots
+    ignore it.
+    """
     if condition_col == "treatment_clean":
         categories = [
             ("WT", "Vehicle"),
@@ -134,7 +142,7 @@ def _draw_across(
             ("het", "Vehicle"),
             ("het", "FFA"),
         ]
-        palette = TREATMENT_PALETTE
+        effective_palette = palette or TREATMENT_PALETTE
         label_for = _treatment_label
     else:
         categories = [
@@ -143,7 +151,7 @@ def _draw_across(
             ("het", "low_risk"),
             ("het", "high_risk"),
         ]
-        palette = DEFAULT_PALETTE
+        effective_palette = DEFAULT_PALETTE
         label_for = _risk_label
 
     fig, ax = make_axes(figsize=_FIG_SIZE)
@@ -164,7 +172,7 @@ def _draw_across(
         valid = sub.dropna()
         if valid.empty:
             continue
-        color = palette[combo]
+        color = effective_palette[combo]
         xs = i + rng.uniform(-_JITTER, _JITTER, size=len(valid))
         ax.scatter(xs, valid, color=color, alpha=_MARKER_ALPHA,
                    s=_MARKER_SIZE, marker="o",

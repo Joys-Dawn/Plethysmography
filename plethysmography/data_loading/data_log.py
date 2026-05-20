@@ -68,6 +68,18 @@ _EXPERIMENT_REGISTRY: Dict[int, Dict[str, Any]] = {
         "preprocessed_subfolder": "experiment 2 - preprocessed data",
         "results_folder": "experiment 2 - chronic FFA vs vehicle",
     },
+    # Experiment 3: acute FFA vs vehicle. Same design shape as experiment 2
+    # (genotype × treatment factorial at P22, four cells WT/het × Vehicle/FFA),
+    # so it reuses the same condition_col="treatment_clean" stats + plot path.
+    # The visual differentiator is ACUTE_FFA_PALETTE (pink FFA family) wired
+    # through generate_publication_plots' palette kwarg at the driver level.
+    3: {
+        "experiment_values": frozenset({"FFA vs vehicle - acute"}),
+        "cohort_folder": "experiment 3 - acute FFA vs vehicle",
+        "raw_subfolder": "experiment 3 - raw data",
+        "preprocessed_subfolder": "experiment 3 - preprocessed data",
+        "results_folder": "experiment 3 - acute FFA vs vehicle",
+    },
     # Experiment 1b (Item G): a 2-group developmental slice of experiment 1 —
     # HR Scn1a+/- P19 vs LR Scn1a+/- P22. It reuses exp1's raw / preprocessed
     # / breathing-CSV artifacts (no re-preprocess), so its cohort/raw/
@@ -331,11 +343,12 @@ def load_recordings_for_experiment(
     data_root: str | Path = ".",
 ) -> List[Recording]:
     """Load all recordings whose 'experiment' column matches the registry for
-    ``experiment_id`` (must be 1 or 2; experiment 4 uses :func:`load_exp4_cohort`).
+    ``experiment_id`` (must be 1, 2, or 3; experiment 4 uses
+    :func:`load_exp4_cohort`).
     """
-    if experiment_id not in (1, 2):
+    if experiment_id not in (1, 2, 3):
         raise ValueError(
-            f"load_recordings_for_experiment supports ids 1 and 2, not {experiment_id}. "
+            f"load_recordings_for_experiment supports ids 1, 2, and 3, not {experiment_id}. "
             f"For experiment 4 use load_exp4_cohort."
         )
     registry = get_experiment_registry(experiment_id)

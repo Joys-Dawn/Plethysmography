@@ -4,10 +4,11 @@
 Usage:
     python run.py exp1                          full experiment-1 pipeline
     python run.py exp2                          full experiment-2 pipeline
+    python run.py exp3                          full experiment-3 pipeline (acute FFA vs vehicle)
     python run.py exp4                          experiment-4 stats + plots only
     python run.py exp1b                         experiment-1b developmental (reuses exp1)
     python run.py sudep                          SUDEP fatal-seizure windows (Column J; bypasses cohort filter)
-    python run.py all                           runs exp1, exp2, exp4, then exp1b
+    python run.py all                           runs exp1, exp2, exp3, exp4, then exp1b
     python run.py preprocess --experiment 1     only preprocess (no analysis)
     python run.py analyze --experiment 1        only analyze + stats + plots
     python run.py stats --experiment 1          only stats (uses cached CSV)
@@ -39,10 +40,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=("exp1", "exp2", "exp4", "exp1b", "sudep", "all", "preprocess", "analyze", "stats", "plots", "normalize-filenames"),
+        choices=("exp1", "exp2", "exp3", "exp4", "exp1b", "sudep", "all", "preprocess", "analyze", "stats", "plots", "normalize-filenames"),
     )
     parser.add_argument(
-        "--experiment", type=int, choices=(1, 2),
+        "--experiment", type=int, choices=(1, 2, 3),
         help="Required for preprocess/analyze/stats/plots commands.",
     )
     parser.add_argument("--config", type=Path, default=None)
@@ -67,6 +68,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.command in ("exp2", "all"):
         from plethysmography.pipelines import experiment2
         experiment2.run(config=config)
+    if args.command in ("exp3", "all"):
+        # exp3 (acute FFA vs vehicle) mirrors exp2 structurally; it
+        # does its own preprocess + analyze, so order vs exp4 is
+        # irrelevant. Slotted between exp2 and exp4 for readability.
+        from plethysmography.pipelines import experiment3
+        experiment3.run(config=config)
     if args.command in ("exp4", "all"):
         from plethysmography.pipelines import experiment4
         experiment4.run()
@@ -87,8 +94,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             parser.error(f"--experiment is required for {args.command}")
         if args.experiment == 1:
             from plethysmography.pipelines import experiment1 as exp_mod
-        else:
+        elif args.experiment == 2:
             from plethysmography.pipelines import experiment2 as exp_mod
+        else:
+            from plethysmography.pipelines import experiment3 as exp_mod
         flags = {
             "preprocess": dict(do_preprocess=True, do_analyze=False, do_stats=False, do_plots=False),
             "analyze":    dict(do_preprocess=False, do_analyze=True, do_stats=True, do_plots=True),

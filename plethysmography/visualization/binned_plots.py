@@ -30,7 +30,7 @@ from ._common import (
     save_figure,
     treatment_word,
 )
-from .colors import MARKERS_BY_AGE, italicize_scn1a
+from .colors import MARKERS_BY_AGE, TREATMENT_PALETTE, italicize_scn1a
 
 
 # Postictal binned plot config: 30 s bins for the first 5 min (10 bins).
@@ -51,13 +51,29 @@ _RISK_GROUPS: Tuple[Tuple[str, str, str, str, str], ...] = (
     (group_label("Scn1a+/-", 22, "LR"), "het", "low_risk",  "#FFA07A", "o"),
     (group_label("Scn1a+/-", 22, "HR"), "het", "high_risk", "#FF0000", "o"),
 )
-# Hexes mirror colors.TREATMENT_PALETTE[(genotype, treatment)] (Item D);
-# tuple order is aligned to those keys and asserted in test_palettes.py.
+def _build_treatment_groups(
+    palette: Dict[Tuple[str, str], str],
+) -> Tuple[Tuple[str, str, str, str, str], ...]:
+    """Build the four-row treatment-cohort group tuple keyed against the
+    supplied palette. The labels / genotype tokens / treatment values /
+    markers are identical across experiments; only the colors swap.
+
+    Used by exp2 (chronic, default ``TREATMENT_PALETTE``) and exp3 (acute,
+    ``ACUTE_FFA_PALETTE`` injected via the binned-plot ``palette`` kwarg).
+    """
+    return (
+        (group_label("WT", 22, treatment_word("Vehicle")),       "WT",  "Vehicle", palette[("WT", "Vehicle")],  "o"),
+        (group_label("WT", 22, treatment_word("FFA")),           "WT",  "FFA",     palette[("WT", "FFA")],      "o"),
+        (group_label("Scn1a+/-", 22, treatment_word("Vehicle")), "het", "Vehicle", palette[("het", "Vehicle")], "o"),
+        (group_label("Scn1a+/-", 22, treatment_word("FFA")),     "het", "FFA",     palette[("het", "FFA")],     "o"),
+    )
+
+
+# Default (chronic) tuple — kept as a module-level constant so the
+# test_palettes.py regression guard still pins the chronic colors. The
+# helper above is the single source of truth.
 _TREATMENT_GROUPS: Tuple[Tuple[str, str, str, str, str], ...] = (
-    (group_label("WT", 22, treatment_word("Vehicle")),       "WT",  "Vehicle", "#D3D3D3", "o"),
-    (group_label("WT", 22, treatment_word("FFA")),           "WT",  "FFA",     "#D8BFD8", "o"),
-    (group_label("Scn1a+/-", 22, treatment_word("Vehicle")), "het", "Vehicle", "#696969", "o"),
-    (group_label("Scn1a+/-", 22, treatment_word("FFA")),     "het", "FFA",     "#800080", "o"),
+    _build_treatment_groups(TREATMENT_PALETTE)
 )
 # Experiment 1b (Item G): the two Scn1a+/- developmental groups. Unlike the
 # risk/treatment layouts above this one spans BOTH ages (HR P19 vs LR P22),
@@ -97,6 +113,7 @@ def plot_postictal_binned(
     baseline_median_ttot_ms: Optional[Dict[str, float]] = None,
     breath_config: Optional[BreathConfig] = None,
     condition_col: str = "risk_clean",
+    palette: Optional[Dict[Tuple[str, str], str]] = None,
 ) -> List[Path]:
     """Render the postictal-binned line plot family. P22 only, 30 s bins
     covering the first 5 min, 4 fixed groups, mean + SEM band per group.
@@ -110,6 +127,9 @@ def plot_postictal_binned(
         baseline_median_ttot_ms: Per-recording baseline median Ttot (ms). Used
             as the apnea-threshold reference. If a recording is absent from
             this map, falls back to the bin-local median.
+        palette: Optional ``(genotype, treatment) -> hex`` palette override.
+            Only consulted when ``condition_col == "treatment_clean"``;
+            ``None`` preserves the chronic ``TREATMENT_PALETTE`` default.
     Returns the list of saved file paths."""
     return _plot_binned(
         period_data, metadata, output_dir,
@@ -121,6 +141,7 @@ def plot_postictal_binned(
         baseline_median_ttot_ms=baseline_median_ttot_ms or {},
         x_tick_labels=[f"{int((b * _POSTICTAL_BIN_S) + _POSTICTAL_BIN_S / 2)}s"
                         for b in range(_POSTICTAL_N_BINS)],
+        palette=palette,
     )
 
 
@@ -133,9 +154,14 @@ def plot_ictal_binned(
     baseline_median_ttot_ms: Optional[Dict[str, float]] = None,
     breath_config: Optional[BreathConfig] = None,
     condition_col: str = "risk_clean",
+    palette: Optional[Dict[Tuple[str, str], str]] = None,
 ) -> List[Path]:
     """Render the ictal-binned line plot family with 1 s bins (matches the
-    docs' specification, which the old code mistakenly used 5 s for)."""
+    docs' specification, which the old code mistakenly used 5 s for).
+
+    ``palette`` is forwarded to :func:`_plot_binned` and only fires inside
+    the ``condition_col == "treatment_clean"`` branch.
+    """
     if not period_data:
         return []
     duration_s = max(t[-1] - t[0] for _, t, _, _ in period_data if t.size > 0)
@@ -151,6 +177,7 @@ def plot_ictal_binned(
         condition_col=condition_col,
         baseline_median_ttot_ms=baseline_median_ttot_ms or {},
         x_tick_labels=None,
+        palette=palette,
     )
 
 
@@ -167,6 +194,7 @@ def _plot_binned(
     condition_col: str,
     baseline_median_ttot_ms: Dict[str, float],
     x_tick_labels: Optional[List[str]],
+    palette: Optional[Dict[Tuple[str, str], str]] = None,
 ) -> List[Path]:
     if n_bins <= 0:
         return []
@@ -177,7 +205,9 @@ def _plot_binned(
         cond_meta_key = "risk_clean"
         p22_only = False
     elif condition_col == "treatment_clean":
-        groups = _TREATMENT_GROUPS
+        # exp3 (acute) injects ACUTE_FFA_PALETTE via the palette kwarg;
+        # exp2 (chronic) passes palette=None and gets TREATMENT_PALETTE.
+        groups = _build_treatment_groups(palette or TREATMENT_PALETTE)
         cond_meta_key = "treatment_clean"
         p22_only = True
     else:
