@@ -44,9 +44,13 @@ _PARAM_DISPLAY: Dict[str, Tuple[str, str]] = {
     "mean_ti_ms_no_apnea":         ("Ti (ms)",         "Ti_ms"),
     "mean_te_ms":                  ("Te (ms)",         "Te_ms"),
     "mean_te_ms_no_apnea":         ("Te (ms)",         "Te_ms"),
-    # Apnea duration — legacy and imputed share label; burden is its own.
+    # Apnea duration — V1 (real durations, >=1-apnea traces only) and V2
+    # (imputed: real, or the longest min(10, n) Ttot when 0 apneas) are now
+    # DISTINCT plots with distinct labels and slugs so the two PNGs no longer
+    # collide on disk. Burden is its own parameter.
     "apnea_mean_ms":             ("Apnea duration (ms)",  "Apnea_duration_ms"),
-    "apnea_mean_ms_imputed":     ("Apnea duration (ms)",  "Apnea_duration_ms"),
+    "apnea_mean_ms_imputed":     ("Apnea or longest-breaths duration (ms)",
+                                  "Apnea_or_longest_breaths_duration_ms"),
     "apnea_burden_ms_per_min":   ("Apnea burden (ms/min)", "Apnea_burden_ms_per_min"),
     # Unchanged columns
     "mean_pif_centered_ml_s":    ("PIF (mL/s)",           "PIF_mL_s"),
@@ -71,6 +75,108 @@ def display_label(parameter: str) -> str:
 def filename_slug(parameter: str) -> str:
     """Old-code-compatible filename token for ``parameter``."""
     return _PARAM_DISPLAY.get(parameter, (parameter, parameter))[1]
+
+
+# ---------------------------------------------------------------------------
+# Apnea-duration reference line + parameter routing (Item B)
+# ---------------------------------------------------------------------------
+# The two apnea-DURATION parameters. The fixed 400 ms reference line is drawn
+# only for these — never for apnea rate or apnea burden.
+APNEA_DURATION_PARAMS: Tuple[str, str] = ("apnea_mean_ms", "apnea_mean_ms_imputed")
+
+_APNEA_DURATION_FLOOR_MS = 400.0
+_APNEA_DUR_SET = set(APNEA_DURATION_PARAMS)
+
+
+def add_apnea_duration_reference_line(ax: "plt.Axes") -> None:
+    """Draw the fixed 400 ms apnea-duration floor as a dashed grey horizontal
+    line.
+
+    The apnea threshold is ``max(2 x baseline median Ttot, 400 ms)``, so
+    400 ms is the hard floor below which no breath can be flagged apneic.
+    The line gives the reader that anchor on every apnea-DURATION plot.
+
+    Call this only for parameters in :data:`APNEA_DURATION_PARAMS` (never on
+    apnea rate or apnea burden). When the current y-range sits entirely above
+    the floor (autoscaled real-duration V1 strips), the lower limit is
+    dropped just below 400 ms so the reference stays visible — a reference
+    line you cannot see is not a reference line.
+    """
+    ax.axhline(
+        _APNEA_DURATION_FLOOR_MS, ls="--", color="grey",
+        linewidth=1.5, zorder=1,
+    )
+    y0, y1 = ax.get_ylim()
+    if y0 > _APNEA_DURATION_FLOOR_MS:
+        span = y1 - _APNEA_DURATION_FLOOR_MS
+        margin = 0.02 * span if span > 0 else 8.0
+        ax.set_ylim(_APNEA_DURATION_FLOOR_MS - margin, y1)
+
+
+def _expand_apnea_slot(parameters, replacement):
+    """Replace the single apnea-duration slot in ``parameters`` with
+    ``replacement`` (a tuple of parameter names), preserving position and
+    dropping any further duration tokens. If the input has no apnea-duration
+    parameter the list is returned unchanged (explicit caller intent wins)."""
+    out, inserted = [], False
+    for p in parameters:
+        if p in _APNEA_DUR_SET:
+            if not inserted:
+                out.extend(replacement)
+                inserted = True
+            # drop any additional duration tokens (de-dup)
+        else:
+            out.append(p)
+    return out
+
+
+def within_style_params(parameters):
+    """Within-time-period strip plots emit BOTH apnea-duration variants:
+    V1 ``apnea_mean_ms`` (real durations, >=1-apnea traces only) then V2
+    ``apnea_mean_ms_imputed`` (imputed)."""
+    return _expand_apnea_slot(
+        parameters, ("apnea_mean_ms", "apnea_mean_ms_imputed")
+    )
+
+
+def across_style_params(parameters):
+    """Across-time-period timeseries use the REAL apnea durations
+    (``apnea_mean_ms``); the ``.dropna()`` in the trace builder already drops
+    zero-apnea traces."""
+    return _expand_apnea_slot(parameters, ("apnea_mean_ms",))
+
+
+# ---------------------------------------------------------------------------
+# Group labels (Item C) — one shared genotype -> age -> condition order
+# ---------------------------------------------------------------------------
+def group_label(genotype: str, age, condition: Optional[str] = None) -> str:
+    """Canonical group label: ``"<Geno> P<age> <COND>"``.
+
+    Word order is always genotype, then age, then condition. The literal
+    ``"Scn1a+/-"`` is preserved so :func:`plethysmography.visualization.colors.italicize_scn1a`
+    can still render it as ``$\\mathit{Scn1a}^{+/-}$`` downstream — only the
+    ORDER of the words changes from the older free-form labels.
+
+    ``age`` accepts an int (``22``), a numeric string (``"22"``) or an
+    already-formatted token (``"P22"``). ``condition`` is omitted entirely
+    when ``None``/empty (used for exp-2 within strips, which pool FFA +
+    Vehicle into each genotype x age cell so no single treatment word
+    applies).
+    """
+    parts = [str(genotype)]
+    if age is not None and str(age) != "":
+        a = str(age).strip()
+        parts.append(a if a.upper().startswith("P") else f"P{int(float(a))}")
+    if condition:
+        parts.append(str(condition))
+    return " ".join(parts)
+
+
+def treatment_word(treatment) -> str:
+    """Display form of the treatment condition for group labels: ``vehicle``
+    (lower-case) / ``FFA`` (upper-case), matching the locked label spec
+    (e.g. ``"WT P19 vehicle"``, ``"Scn1a+/- P22 FFA"``)."""
+    return "vehicle" if str(treatment).strip().lower().startswith("veh") else "FFA"
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +214,6 @@ def global_ylim(
     high_value = "Vehicle" if condition_col == "treatment_clean" else "high_risk"
     high_values = ("FFA", "Vehicle") if condition_col == "treatment_clean" else ("high_risk",)
 
-    has_nan = False
     all_values = []
     for period in periods:
         sub = data[data["period"] == period]
@@ -117,22 +222,19 @@ def global_ylim(
         p22 = sub[sub["age_clean"] == 22]
         if not p22.empty:
             all_values.extend(p22[parameter].dropna().tolist())
-            if parameter == "apnea_mean_ms" and p22[parameter].isna().any():
-                has_nan = True
         hi = sub[sub[condition_col].astype(str).isin(high_values)]
         if not hi.empty:
             all_values.extend(hi[parameter].dropna().tolist())
-            if parameter == "apnea_mean_ms" and hi[parameter].isna().any():
-                has_nan = True
 
     if not all_values:
         return None
-    # Anchor y at 0 for apnea-flavored parameters (rate / imputed mean /
-    # burden): zero is the natural baseline and the eye expects it. The
-    # legacy ``apnea_mean_ms`` retains its original "anchor at zero only
-    # when NaN dropouts exist" behavior so the regression plots match.
+    # Anchor y at 0 for the imputed apnea mean and apnea burden: zero is the
+    # natural baseline and the eye expects it. The real-duration
+    # ``apnea_mean_ms`` (V1) is autoscaled — it only ever holds >=1-apnea
+    # traces, all >= the 400 ms floor, so a zero anchor would waste the axis;
+    # the 400 ms reference line provides the floor anchor instead (Item B).
     _zero_anchored = {"apnea_mean_ms_imputed", "apnea_burden_ms_per_min"}
-    if parameter in _zero_anchored or (parameter == "apnea_mean_ms" and has_nan):
+    if parameter in _zero_anchored:
         y_min, y_max = 0.0, float(max(all_values))
     else:
         y_min, y_max = float(min(all_values)), float(max(all_values))

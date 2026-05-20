@@ -23,7 +23,16 @@ import numpy as np
 import pandas as pd
 from matplotlib.axes import Axes
 
-from ._common import display_label, filename_slug, make_axes, save_figure
+from ._common import (
+    APNEA_DURATION_PARAMS,
+    add_apnea_duration_reference_line,
+    display_label,
+    filename_slug,
+    group_label,
+    make_axes,
+    save_figure,
+    treatment_word,
+)
 from .colors import (
     DEFAULT_PALETTE,
     HR_BAR_PALETTE,
@@ -148,42 +157,21 @@ def _draw_across(
             & (p22_data[condition_col].astype(str) == cond)
         )
         sub = p22_data.loc[mask, parameter]
-        # Legacy fallback for plain ``apnea_mean_ms``: 0-apnea traces are
-        # plotted as grey markers at y=0. With the default plot list now
-        # using ``apnea_mean_ms_imputed`` (no NaNs by construction), this
-        # branch is unreachable through normal pipeline runs but kept so
-        # callers explicitly passing ``parameter="apnea_mean_ms"`` still
-        # render correctly.
-        if parameter == "apnea_mean_ms":
-            valid = sub.dropna()
-            nan_count = sub.isna().sum()
-            color = palette[combo]
-            if not valid.empty:
-                xs = i + rng.uniform(-_JITTER, _JITTER, size=len(valid))
-                ax.scatter(xs, valid, color=color, alpha=_MARKER_ALPHA,
-                           s=_MARKER_SIZE, marker="o",
-                           edgecolors="black", linewidth=_MARKER_EDGE_LINEWIDTH)
-            if nan_count > 0:
-                xs = i + rng.uniform(-_JITTER, _JITTER, size=int(nan_count))
-                ax.scatter(xs, np.zeros(int(nan_count)), color="grey",
-                           alpha=_MARKER_ALPHA, s=_MARKER_SIZE, marker="o",
-                           edgecolors="black", linewidth=_MARKER_EDGE_LINEWIDTH)
-            if not valid.empty:
-                means.append(float(valid.mean()))
-                sems.append(_sem(valid))
-                x_positions.append(i)
-        else:
-            valid = sub.dropna()
-            if valid.empty:
-                continue
-            color = palette[combo]
-            xs = i + rng.uniform(-_JITTER, _JITTER, size=len(valid))
-            ax.scatter(xs, valid, color=color, alpha=_MARKER_ALPHA,
-                       s=_MARKER_SIZE, marker="o",
-                       edgecolors="black", linewidth=_MARKER_EDGE_LINEWIDTH)
-            means.append(float(valid.mean()))
-            sems.append(_sem(valid))
-            x_positions.append(i)
+        # All parameters (including the V1 ``apnea_mean_ms``) plot only
+        # finite values: zero-apnea traces are NaN in apnea_mean_ms and are
+        # dropped here, so V1 shows >=1-apnea traces only. The old grey
+        # marker-at-0 special-case for apnea_mean_ms is removed (Item B).
+        valid = sub.dropna()
+        if valid.empty:
+            continue
+        color = palette[combo]
+        xs = i + rng.uniform(-_JITTER, _JITTER, size=len(valid))
+        ax.scatter(xs, valid, color=color, alpha=_MARKER_ALPHA,
+                   s=_MARKER_SIZE, marker="o",
+                   edgecolors="black", linewidth=_MARKER_EDGE_LINEWIDTH)
+        means.append(float(valid.mean()))
+        sems.append(_sem(valid))
+        x_positions.append(i)
 
     if not means:
         import matplotlib.pyplot as plt
@@ -202,6 +190,8 @@ def _draw_across(
     )
     if ylim is not None:
         ax.set_ylim(ylim)
+    if parameter in APNEA_DURATION_PARAMS:
+        add_apnea_duration_reference_line(ax)
     save_figure(fig, output_path)
     return output_path
 
@@ -235,35 +225,18 @@ def _draw_within(
         marker = MARKERS_BY_AGE.get(int(age), "o")
         color = HR_BAR_PALETTE.get((gen, int(age)), "#6b7280")
 
-        # Legacy fallback for plain ``apnea_mean_ms``; see _draw_across.
-        if parameter == "apnea_mean_ms":
-            valid = sub.dropna()
-            nan_count = int(sub.isna().sum())
-            if not valid.empty:
-                xs = i + rng.uniform(-_JITTER, _JITTER, size=len(valid))
-                ax.scatter(xs, valid, color=color, alpha=_MARKER_ALPHA,
-                           s=_MARKER_SIZE, marker=marker,
-                           edgecolors="black", linewidth=_MARKER_EDGE_LINEWIDTH)
-            if nan_count > 0:
-                xs = i + rng.uniform(-_JITTER, _JITTER, size=nan_count)
-                ax.scatter(xs, np.zeros(nan_count), color="grey",
-                           alpha=_MARKER_ALPHA, s=_MARKER_SIZE, marker=marker,
-                           edgecolors="black", linewidth=_MARKER_EDGE_LINEWIDTH)
-            if not valid.empty:
-                means.append(float(valid.mean()))
-                sems.append(_sem(valid))
-                x_positions.append(i)
-        else:
-            valid = sub.dropna()
-            if valid.empty:
-                continue
-            xs = i + rng.uniform(-_JITTER, _JITTER, size=len(valid))
-            ax.scatter(xs, valid, color=color, alpha=_MARKER_ALPHA,
-                       s=_MARKER_SIZE, marker=marker,
-                       edgecolors="black", linewidth=_MARKER_EDGE_LINEWIDTH)
-            means.append(float(valid.mean()))
-            sems.append(_sem(valid))
-            x_positions.append(i)
+        # See _draw_across: the grey marker-at-0 special-case for
+        # apnea_mean_ms is removed; V1 plots >=1-apnea traces only (Item B).
+        valid = sub.dropna()
+        if valid.empty:
+            continue
+        xs = i + rng.uniform(-_JITTER, _JITTER, size=len(valid))
+        ax.scatter(xs, valid, color=color, alpha=_MARKER_ALPHA,
+                   s=_MARKER_SIZE, marker=marker,
+                   edgecolors="black", linewidth=_MARKER_EDGE_LINEWIDTH)
+        means.append(float(valid.mean()))
+        sems.append(_sem(valid))
+        x_positions.append(i)
 
     if not means:
         import matplotlib.pyplot as plt
@@ -283,6 +256,8 @@ def _draw_within(
     )
     if ylim is not None:
         ax.set_ylim(ylim)
+    if parameter in APNEA_DURATION_PARAMS:
+        add_apnea_duration_reference_line(ax)
     save_figure(fig, output_path)
     return output_path
 
@@ -316,26 +291,30 @@ def _format_axes(ax: Axes, *, ylabel: str, xtick_labels) -> None:
 
 
 def _risk_label(combo) -> str:
+    # across is P22-only; word order genotype -> age -> condition (Item C).
     gen, cond = combo
     risk = "LR" if cond == "low_risk" else "HR"
     geno = "Scn1a+/-" if gen == "het" else "WT"
-    return f"{risk} {geno}\nP22"
+    return group_label(geno, 22, risk)
 
 
 def _treatment_label(combo) -> str:
+    # across is P22-only; "vehicle" / "FFA" treatment word (Item C).
     gen, treat = combo
     geno = "Scn1a+/-" if gen == "het" else "WT"
-    return f"{geno}\n{treat}"
+    return group_label(geno, 22, treatment_word(treat))
 
 
 def _within_label_for(condition_col: str):
     if condition_col == "treatment_clean":
+        # exp-2 within cells pool FFA + Vehicle, so no treatment word
+        # applies — condition is omitted (locked exp-2-within resolution).
         def label(gen, age):
             geno = "Scn1a+/-" if gen == "het" else "WT"
-            return f"{geno}\nP{age}"
+            return group_label(geno, age, None)
         return label
 
     def label(gen, age):
         geno = "Scn1a+/-" if gen == "het" else "WT"
-        return f"HR {geno}\nP{age}"
+        return group_label(geno, age, "HR")
     return label

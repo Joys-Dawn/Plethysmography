@@ -25,7 +25,17 @@ import pandas as pd
 from matplotlib.axes import Axes
 from matplotlib.lines import Line2D
 
-from ._common import display_label, filename_slug, make_axes, save_figure
+from ._common import (
+    APNEA_DURATION_PARAMS,
+    across_style_params,
+    add_apnea_duration_reference_line,
+    display_label,
+    filename_slug,
+    group_label,
+    make_axes,
+    save_figure,
+    within_style_params,
+)
 from .colors import italicize_scn1a
 
 
@@ -93,7 +103,10 @@ def plot_survivor_publication(
     within_dir = output_dir / "Within each time period"
     across_dir = output_dir / "Across time periods"
 
-    for param in parameters:
+    # Within-period strips emit BOTH apnea-duration variants (V1 real,
+    # >=1-apnea only + V2 imputed); the across timeseries uses the real
+    # durations only — same V1/V2 split as the exp1/exp2 publication bundle.
+    for param in within_style_params(parameters):
         ylim = _ylim_across_periods(merged, param)
         for period in _PERIODS_TO_PLOT:
             path = _draw_within_period(
@@ -103,6 +116,7 @@ def plot_survivor_publication(
             )
             if path is not None:
                 saved.append(path)
+    for param in across_style_params(parameters):
         path = _draw_across_periods(
             merged, param,
             output_path=across_dir / f"Timeseries_{filename_slug(param)}_survival.png",
@@ -115,17 +129,17 @@ def plot_survivor_publication(
 def _ylim_across_periods(data: pd.DataFrame, parameter: str) -> Optional[Tuple[float, float]]:
     if parameter not in data.columns:
         return None
-    has_nan = False
     values: List[float] = []
     for period in _PERIODS_TO_PLOT:
         col = data.loc[data["period"] == period, parameter]
         values.extend(col.dropna().tolist())
-        if parameter == "apnea_mean_ms" and col.isna().any():
-            has_nan = True
     if not values:
         return None
+    # Imputed apnea mean + apnea burden anchor at 0; the real-duration
+    # ``apnea_mean_ms`` (V1) is autoscaled and gets the 400 ms reference
+    # line as its floor anchor instead (Item B).
     _zero_anchored = {"apnea_mean_ms_imputed", "apnea_burden_ms_per_min"}
-    if parameter in _zero_anchored or (parameter == "apnea_mean_ms" and has_nan):
+    if parameter in _zero_anchored:
         y_min, y_max = 0.0, float(max(values))
     else:
         y_min, y_max = float(min(values)), float(max(values))
@@ -165,38 +179,18 @@ def _draw_within_period(
     )
 
     for i, (_label, color, raw) in enumerate(cells):
-        # Legacy fallback for plain ``apnea_mean_ms``: 0-apnea traces are
-        # plotted as grey markers at y=0. The default plot list now uses
-        # ``apnea_mean_ms_imputed`` (no NaNs by construction); this branch
-        # remains so callers passing the legacy column still render.
-        if parameter == "apnea_mean_ms":
-            valid = raw.dropna()
-            nan_count = int(raw.isna().sum())
-            if not valid.empty:
-                xs = i + rng.uniform(-_JITTER, _JITTER, size=len(valid))
-                ax.scatter(xs, valid, color=color, alpha=_MARKER_ALPHA,
-                           s=_MARKER_SIZE, marker=_MARKER,
-                           edgecolors="black", linewidth=0.5)
-            if nan_count > 0:
-                xs = i + rng.uniform(-_JITTER, _JITTER, size=nan_count)
-                ax.scatter(xs, np.zeros(nan_count), color="grey",
-                           alpha=_MARKER_ALPHA, s=_MARKER_SIZE, marker=_MARKER,
-                           edgecolors="black", linewidth=0.5)
-            if not valid.empty:
-                means.append(float(valid.mean()))
-                sems.append(_sem(valid))
-                x_positions.append(i)
-        else:
-            valid = raw.dropna()
-            if valid.empty:
-                continue
-            xs = i + rng.uniform(-_JITTER, _JITTER, size=len(valid))
-            ax.scatter(xs, valid, color=color, alpha=_MARKER_ALPHA,
-                       s=_MARKER_SIZE, marker=_MARKER,
-                       edgecolors="black", linewidth=0.5)
-            means.append(float(valid.mean()))
-            sems.append(_sem(valid))
-            x_positions.append(i)
+        # Grey marker-at-0 special-case for apnea_mean_ms removed; V1 plots
+        # >=1-apnea traces only, V2 (imputed) has no NaNs (Item B).
+        valid = raw.dropna()
+        if valid.empty:
+            continue
+        xs = i + rng.uniform(-_JITTER, _JITTER, size=len(valid))
+        ax.scatter(xs, valid, color=color, alpha=_MARKER_ALPHA,
+                   s=_MARKER_SIZE, marker=_MARKER,
+                   edgecolors="black", linewidth=0.5)
+        means.append(float(valid.mean()))
+        sems.append(_sem(valid))
+        x_positions.append(i)
 
     if not means:
         import matplotlib.pyplot as plt
@@ -213,8 +207,8 @@ def _draw_within_period(
     ax.set_xticks([0, 1])
     ax.set_xlim(-0.6, 1.4)
     ax.set_xticklabels(
-        [italicize_scn1a("Survivor\nScn1a+/- P19"),
-         italicize_scn1a("SUDEP\nScn1a+/- P19")],
+        [italicize_scn1a(group_label("Scn1a+/-", 19, "survivor")),
+         italicize_scn1a(group_label("Scn1a+/-", 19, "SUDEP"))],
         fontsize=_TICK_FONTSIZE,
     )
     ax.xaxis.set_tick_params(rotation=45)
@@ -222,6 +216,8 @@ def _draw_within_period(
     ax.spines["right"].set_visible(False)
     if ylim is not None:
         ax.set_ylim(ylim)
+    if parameter in APNEA_DURATION_PARAMS:
+        add_apnea_duration_reference_line(ax)
     save_figure(fig, output_path)
     return output_path
 
@@ -281,11 +277,13 @@ def _draw_across_periods(
                markersize=10, markeredgecolor="black", markeredgewidth=0.5),
     ]
     labels = [
-        italicize_scn1a("Survivor Scn1a+/- P19"),
-        italicize_scn1a("SUDEP Scn1a+/- P19"),
+        italicize_scn1a(group_label("Scn1a+/-", 19, "survivor")),
+        italicize_scn1a(group_label("Scn1a+/-", 19, "SUDEP")),
     ]
     ax.legend(handles, labels, fontsize=_LEGEND_FONTSIZE, frameon=False,
               loc="upper center", bbox_to_anchor=(0.5, -0.35), ncol=2)
+    if parameter in APNEA_DURATION_PARAMS:
+        add_apnea_duration_reference_line(ax)
     save_figure(fig, output_path)
     return output_path
 

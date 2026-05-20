@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 import pandas as pd
 
@@ -24,6 +24,40 @@ logger = logging.getLogger(__name__)
 
 DATA_ROOT = Path("Data")
 RESULTS_ROOT = Path("results")
+
+
+def experiment_output_dirs(
+    registry: Dict[str, Any],
+    results_root: Path,
+) -> Tuple[Path, Path]:
+    """Return ``(interactive_root, pub_root)`` for one experiment (Item E).
+
+    Each experiment now writes into two sibling top-level folders under
+    ``results/``, derived from the registry's ``results_folder`` (e.g.
+    ``"experiment 1 - LR vs HR comparison"``):
+
+      - ``Experiment 1 - LR vs HR comparison - interactive plots/`` —
+        holds **only** the plotly interactive HTML.
+      - ``Experiment 1 - LR vs HR comparison - publication plots and
+        stats/`` — holds ``plots/``, ``stats/``, ``trace_plots/``,
+        ``Ictal_Histograms/``, ``Ictal_Histograms_population/``, the
+        breathing CSV and the apnea xlsx.
+
+    Only the leading ``"experiment"`` token is title-cased to
+    ``"Experiment"`` (so the two siblings sort together at the top of
+    ``results/``); the rest of the registry name is preserved verbatim.
+    No directory is created here — callers ``mkdir`` what they actually
+    write.
+    """
+    base = str(registry["results_folder"]).strip()
+    if base[:11].lower() == "experiment ":
+        stem = "Experiment " + base[11:]
+    else:
+        stem = base
+    results_root = Path(results_root)
+    interactive_root = results_root / f"{stem} - interactive plots"
+    pub_root = results_root / f"{stem} - publication plots and stats"
+    return interactive_root, pub_root
 
 
 def preprocess_all(
@@ -126,12 +160,17 @@ def analyze_all(
     *,
     interactive_dir: Path | None = None,
     ictal_histograms_dir: Path | None = None,
+    population_ictal_dir: Path | None = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Wrap :func:`plethysmography.analysis.pipeline.analyze_experiment`."""
+    """Wrap :func:`plethysmography.analysis.pipeline.analyze_experiment`.
+
+    ``population_ictal_dir`` (Item F) is where the pooled per-group ictal
+    histograms are written; passed straight through."""
     return analyze_experiment(
         list(recordings), preprocessed_dir, config,
         interactive_dir=interactive_dir,
         ictal_histograms_dir=ictal_histograms_dir,
+        population_ictal_dir=population_ictal_dir,
     )
 
 

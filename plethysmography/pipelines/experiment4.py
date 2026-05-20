@@ -36,7 +36,7 @@ from ..stats import (
     write_stats_xlsx,
 )
 from ..visualization import plot_survivor_publication
-from ._common import DATA_ROOT, RESULTS_ROOT
+from ._common import DATA_ROOT, RESULTS_ROOT, experiment_output_dirs
 
 
 logger = logging.getLogger(__name__)
@@ -54,8 +54,9 @@ def run(
     """Run the experiment-4 stats + plots."""
     del config  # not used for exp 4 — it has no preprocess/analyze stage
     registry = get_experiment_registry(EXPERIMENT_ID)
-    results_dir = results_root / registry["results_folder"]
-    results_dir.mkdir(parents=True, exist_ok=True)
+    # Item E: exp4 produces no plotly HTML, so only pub_root is used.
+    _interactive_root, pub_root = experiment_output_dirs(registry, results_root)
+    pub_root.mkdir(parents=True, exist_ok=True)
 
     cohort = load_exp4_cohort(data_root=data_root)
     logger.info(
@@ -75,7 +76,7 @@ def run(
         )
         return
 
-    breathing_df.to_csv(results_dir / "breathing_analysis_results.csv", index=False)
+    breathing_df.to_csv(pub_root / "breathing_analysis_results.csv", index=False)
 
     merged = prepare_breathing_data(breathing_df, load_data_log())
     merged = merged[merged["sudep_status"].isin(["survivor", "sudep"])]
@@ -89,11 +90,11 @@ def run(
         run_across_periods=False,
         run_survival=True,
     )
-    stats_dir = results_dir / "stats"
+    stats_dir = pub_root / "stats"
     stats_dir.mkdir(parents=True, exist_ok=True)
     write_stats_xlsx(rows, stats_dir / "statistical_results.xlsx")
 
-    plot_dir = results_dir / "plots"
+    plot_dir = pub_root / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)
     plot_survivor_publication(merged, plot_dir)
 
@@ -106,11 +107,17 @@ def _load_cohort_breathing(
     exp2_csv: Optional[Path],
 ) -> pd.DataFrame:
     """Load the breathing CSVs from experiments 1 and 2 and concatenate the
-    rows whose ``file_basename`` is in the experiment-4 cohort."""
+    rows whose ``file_basename`` is in the experiment-4 cohort.
+
+    Item E moved the breathing CSV under each experiment's ``pub_root``
+    (``Experiment N - … - publication plots and stats/``), so exp4 must
+    resolve those new locations rather than the old flat folders."""
     if exp1_csv is None:
-        exp1_csv = results_root / "experiment 1 - LR vs HR comparison" / "breathing_analysis_results.csv"
+        _, exp1_pub = experiment_output_dirs(get_experiment_registry(1), results_root)
+        exp1_csv = exp1_pub / "breathing_analysis_results.csv"
     if exp2_csv is None:
-        exp2_csv = results_root / "experiment 2 - chronic FFA vs vehicle" / "breathing_analysis_results.csv"
+        _, exp2_pub = experiment_output_dirs(get_experiment_registry(2), results_root)
+        exp2_csv = exp2_pub / "breathing_analysis_results.csv"
     cohort_basenames = {r.file_basename for r in cohort}
 
     dfs = []

@@ -19,8 +19,10 @@ import pytest
 
 from plethysmography.analysis.breath_segmentation import Breath
 from plethysmography.visualization.ictal_histograms import (
+    _population_slug,
     emit_ictal_histograms,
     plot_ictal_histograms,
+    plot_population_ictal_histograms,
     write_ictal_breaths_csv,
 )
 
@@ -190,3 +192,137 @@ def test_analyze_experiment_skips_histograms_when_dir_is_none(tmp_path: Path):
     analyze_experiment([recording], preprocessed, PlethConfig())
     # No Ictal_Histograms folder anywhere under tmp_path.
     assert not (tmp_path / "Ictal_Histograms").exists()
+
+
+# ---------------------------------------------------------------------------
+# Item F: population (pooled-per-group) ictal histograms.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("WT P22 LR", "WT_P22_LR"),
+        ("Scn1a+/- P22 vehicle", "Scn1a_P22_vehicle"),
+        ("Scn1a+/- P19 SUDEP", "Scn1a_P19_SUDEP"),
+        ("Scn1a+/- P19 survivor", "Scn1a_P19_survivor"),
+    ],
+)
+def test_population_slug(label, expected):
+    assert _population_slug(label) == expected
+
+
+def test_plot_population_writes_one_png_per_group(tmp_path: Path):
+    groups = {
+        "WT P22 LR": ([_breath(200.0), _breath(210.0)], [False, False]),
+        "Scn1a+/- P22 HR": (
+            [_breath(220.0), _breath(900.0, peak_diff=4.0)],
+            [False, True],
+        ),
+    }
+    saved = plot_population_ictal_histograms(groups, tmp_path)
+    assert sorted(p.name for p in saved) == [
+        "Scn1a_P22_HR_ictal_histograms.png",
+        "WT_P22_LR_ictal_histograms.png",
+    ]
+    for p in saved:
+        assert p.exists() and p.stat().st_size > 0
+
+
+def test_plot_population_skips_group_with_no_breaths(tmp_path: Path):
+    """A group that pooled zero breaths (or no finite values) is skipped —
+    no PNG, not in the returned list (reuses the _render_two_panel None
+    contract)."""
+    groups = {
+        "WT P22 LR": ([_breath(200.0)], [False]),
+        "Scn1a+/- P22 HR": ([], []),
+    }
+    saved = plot_population_ictal_histograms(groups, tmp_path)
+    assert [p.name for p in saved] == ["WT_P22_LR_ictal_histograms.png"]
+    assert not (tmp_path / "Scn1a_P22_HR_ictal_histograms.png").exists()
+
+
+def test_population_accumulation_skips_g0_basename(tmp_path: Path, monkeypatch):
+    """The Item A↔F coupling guard: analyze_experiment's pool must drop a
+    recording whose basename is NOT in population_included_basenames()
+    (Column G == 0), even though that recording still gets a breathing row.
+    The two recordings map to distinct group labels so the skip is provable
+    by the presence/absence of each group's pooled PNG."""
+    from plethysmography.analysis.pipeline import analyze_experiment
+    from plethysmography.core.config import PlethConfig
+    from plethysmography.core.data_models import Recording
+    import plethysmography.data_loading.data_log as data_log
+
+    preprocessed = tmp_path / "preprocessed"
+    pop_dir = tmp_path / "Ictal_Histograms_population"
+    fs = 1000.0
+    for basename in ("inc_subject", "exc_subject"):
+        for period_token, duration_s, period_start, lid_close in (
+            ("Baseline", 60.0, 900.0, 900.0),
+            ("Ictal", 30.0, 1500.0, 1500.0),
+        ):
+            _write_synthetic_period_csv(
+                preprocessed / f"{basename}_{period_token}.csv",
+                duration_s=duration_s, fs=fs,
+                period_start_time=period_start, lid_closure_time=lid_close,
+            )
+
+    inc = Recording(
+        file_basename="inc_subject", edf_path=tmp_path / "inc_subject.EDF",
+        mouse_id="i", age="P22", genotype="het", cohort="test", risk="HR", fs=fs,
+    )
+    exc = Recording(
+        file_basename="exc_subject", edf_path=tmp_path / "exc_subject.EDF",
+        mouse_id="e", age="P22", genotype="WT", cohort="test", risk="LR", fs=fs,
+    )
+
+    # Column G says only inc_subject is included.
+    monkeypatch.setattr(
+        data_log, "population_included_basenames", lambda *a, **k: {"inc_subject"}
+    )
+
+    breathing_df, _ = analyze_experiment(
+        [inc, exc], preprocessed, PlethConfig(), population_ictal_dir=pop_dir,
+    )
+
+    # exc_subject still produced a breathing row (G filter is a population
+    # gate, not an analyze gate) ...
+    assert set(breathing_df["file_basename"]) == {"inc_subject", "exc_subject"}
+    # ... but only the included recording's group histogram exists.
+    assert (pop_dir / "Scn1a_P22_HR_ictal_histograms.png").exists()
+    assert not (pop_dir / "WT_P22_LR_ictal_histograms.png").exists()
+
+
+def test_population_pool_off_by_default_does_not_read_data_log(
+    tmp_path: Path, monkeypatch
+):
+    """When population_ictal_dir is not given, population_included_basenames
+    must NOT be called — otherwise every existing analyze_experiment caller
+    /test would start depending on the real data-log xlsx."""
+    from plethysmography.analysis.pipeline import analyze_experiment
+    from plethysmography.core.config import PlethConfig
+    from plethysmography.core.data_models import Recording
+    import plethysmography.data_loading.data_log as data_log
+
+    preprocessed = tmp_path / "preprocessed"
+    fs = 1000.0
+    for period_token, duration_s, period_start, lid_close in (
+        ("Baseline", 60.0, 900.0, 900.0),
+        ("Ictal", 30.0, 1500.0, 1500.0),
+    ):
+        _write_synthetic_period_csv(
+            preprocessed / f"test_subject_{period_token}.csv",
+            duration_s=duration_s, fs=fs,
+            period_start_time=period_start, lid_closure_time=lid_close,
+        )
+
+    def _boom(*a, **k):
+        raise AssertionError("population_included_basenames must not be called")
+
+    monkeypatch.setattr(data_log, "population_included_basenames", _boom)
+
+    recording = Recording(
+        file_basename="test_subject", edf_path=tmp_path / "test_subject.EDF",
+        mouse_id="t", age="P22", genotype="het", cohort="test", risk="HR", fs=fs,
+    )
+    # No population_ictal_dir -> _boom must never fire.
+    analyze_experiment([recording], preprocessed, PlethConfig())
+    assert not (tmp_path / "Ictal_Histograms_population").exists()

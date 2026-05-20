@@ -17,7 +17,7 @@ from .colors import (
     treatment_palette,
 )
 from .bar_plots import plot_within_period
-from .timeseries_plots import plot_across_periods
+from .timeseries_plots import draw_developmental_timeseries, plot_across_periods
 from .binned_plots import plot_postictal_binned, plot_ictal_binned
 from .ictal_histograms import (
     emit_ictal_histograms,
@@ -44,6 +44,7 @@ __all__ = [
     "treatment_palette",
     "plot_within_period",
     "plot_across_periods",
+    "draw_developmental_timeseries",
     "plot_postictal_binned",
     "plot_ictal_binned",
     "emit_ictal_histograms",

@@ -7,13 +7,20 @@ Color palette for cohort plots, matching ``old_code/analyze_data.py`` and
   - LR WT          (P22)         : ``#87CEEB``  pale blue (sky blue)
   - LR Scn1a+/-    (P22)         : ``#FFA07A``  pale red  (light salmon)
 
-For experiment 2 (FFA cohort), Vehicle reuses the HR palette and FFA gets a
-distinct orange/purple pair:
+For experiment 2 (chronic FFA cohort), the treatment palette is a
+gray/purple family scheme — *family* encodes treatment (gray = Vehicle,
+purple = FFA), *darkness* encodes genotype (lighter = WT, darker =
+Scn1a+/-), analogous to exp1's blue/red + pale convention:
 
-  - Vehicle WT     : ``#0000FF``
-  - Vehicle Scn1a  : ``#FF0000``
-  - FFA WT         : ``#9370DB``  purple
-  - FFA Scn1a      : ``#E67E22``  orange
+  - WT Vehicle       : ``#D3D3D3``  lightgray
+  - Scn1a+/- Vehicle : ``#696969``  dimgray
+  - WT FFA           : ``#D8BFD8``  thistle
+  - Scn1a+/- FFA     : ``#800080``  purple
+
+``ACUTE_FFA_PALETTE`` (same gray Vehicle pair + ``#FFB6C1`` lightpink /
+``#C71585`` mediumvioletred for FFA) is provided for the deferred
+experiment 3 (acute FFA) and is intentionally **not** wired into any plot
+driver yet.
 
 Marker convention (used by within / timeseries plots):
 
@@ -34,12 +41,26 @@ DEFAULT_PALETTE: Dict[Tuple[str, str], str] = {
     ("het", "high_risk"): "#FF0000",
 }
 
-# Experiment 2 palette: (genotype, treatment) -> color
+# Experiment 2 (chronic FFA) palette: (genotype, treatment) -> color.
+# Item D: gray/purple family scheme. family = treatment (gray Vehicle /
+# purple FFA), darkness = genotype (light WT / dark Scn1a+/-). Keys keep the
+# existing "WT"/"het" genotype tokens so every consumer is unaffected.
 TREATMENT_PALETTE: Dict[Tuple[str, str], str] = {
-    ("WT", "Vehicle"): "#0000FF",
-    ("WT", "FFA"): "#9370DB",
-    ("het", "Vehicle"): "#FF0000",
-    ("het", "FFA"): "#E67E22",
+    ("WT", "Vehicle"): "#D3D3D3",   # lightgray
+    ("WT", "FFA"): "#D8BFD8",       # thistle
+    ("het", "Vehicle"): "#696969",  # dimgray
+    ("het", "FFA"): "#800080",      # purple
+}
+
+# Experiment 3 (acute FFA) palette — deferred. Same gray Vehicle pair as the
+# chronic palette; FFA swaps the purple family for a pink family so acute and
+# chronic FFA plots are visually distinguishable. Intentionally **unwired**:
+# no plot driver references this yet (added now so exp3 has a locked palette).
+ACUTE_FFA_PALETTE: Dict[Tuple[str, str], str] = {
+    ("WT", "Vehicle"): "#D3D3D3",   # lightgray
+    ("WT", "FFA"): "#FFB6C1",       # lightpink
+    ("het", "Vehicle"): "#696969",  # dimgray
+    ("het", "FFA"): "#C71585",      # mediumvioletred
 }
 
 # (genotype, age) -> color for **bar within** plots (old_code/analyze_data.py

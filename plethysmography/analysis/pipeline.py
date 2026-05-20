@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -191,6 +191,7 @@ def analyze_recording(
     interactive_dir: Optional[Path] = None,
     apneas_for_interactive: bool = True,
     ictal_histograms_dir: Optional[Path] = None,
+    population_sink: Optional[Callable[[Recording, "PeriodAnalysisResult"], None]] = None,
 ) -> Tuple[List[BreathMetrics], List[ApneaEvent], Dict[str, List[Breath]]]:
     """Analyze every Period of one recording, two-pass.
 
@@ -284,6 +285,14 @@ def analyze_recording(
             output_dir=Path(ictal_histograms_dir),
         )
 
+    def _maybe_accumulate_population(period_name: str, result: PeriodAnalysisResult) -> None:
+        # Item F: hand the ICTAL period result to the experiment-level pool
+        # sink (which applies the Column-G gate and group-label keying). Only
+        # the ICTAL period feeds the pooled population histograms.
+        if population_sink is None or period_name != ICTAL:
+            return
+        population_sink(recording, result)
+
     for name in PERIOD_NAMES:
         if name == BASELINE:
             if baseline_result is not None:
@@ -307,6 +316,7 @@ def analyze_recording(
         breaths_by_period[name] = result.breaths
         _maybe_emit_interactive(period, result)
         _maybe_emit_ictal_histograms(name, result)
+        _maybe_accumulate_population(name, result)
 
     return metrics_rows, apnea_rows, breaths_by_period
 
@@ -321,6 +331,7 @@ def analyze_experiment(
     *,
     interactive_dir: Optional[str | Path] = None,
     ictal_histograms_dir: Optional[str | Path] = None,
+    population_ictal_dir: Optional[str | Path] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Load preprocessed CSVs from ``preprocessed_dir`` and run the two-pass
     breath analysis for every recording in ``recordings``.
@@ -332,6 +343,15 @@ def analyze_experiment(
     Ttot/PIF-to-PEF histogram PNG plus a per-breath CSV (see
     :mod:`plethysmography.visualization.ictal_histograms`).
 
+    When ``population_ictal_dir`` is given (Item F), ICTAL breaths are also
+    pooled across recordings per analysis group
+    (``group_label(genotype, age, risk|treatment)``) and one combined
+    Ttot/PIF-to-PEF histogram per group is written there after the recording
+    loop. The pool is gated by Column G via
+    :func:`plethysmography.data_loading.data_log.population_included_basenames`
+    so the 5 G=0 files (which bypass ``prepare_breathing_data`` on this code
+    path) cannot pollute the pooled distributions.
+
     Returns ``(breathing_df, apnea_df)`` ready to write to disk. The breathing
     DataFrame's column order matches old_results/breathing_analysis_results.csv
     plus the project-extension columns appended at the end.
@@ -339,7 +359,38 @@ def analyze_experiment(
     preprocessed_dir = Path(preprocessed_dir)
     interactive_path = Path(interactive_dir) if interactive_dir is not None else None
     histograms_path = Path(ictal_histograms_dir) if ictal_histograms_dir is not None else None
+    population_path = Path(population_ictal_dir) if population_ictal_dir is not None else None
     by_basename = {r.file_basename: r for r in recordings}
+
+    # Item F: pooled ICTAL breaths per analysis group. Built only when the
+    # caller asked for population histograms (keeps the data-log read off the
+    # default path so the existing no-arg tests/callers are untouched).
+    population_pool: Dict[str, Tuple[List[Breath], List[bool]]] = {}
+    population_sink: Optional[Callable[[Recording, PeriodAnalysisResult], None]] = None
+    if population_path is not None:
+        from ..data_loading.data_log import population_included_basenames
+        from ..visualization._common import group_label, treatment_word
+
+        _included = population_included_basenames()
+
+        def _accumulate(rec: Recording, result: PeriodAnalysisResult) -> None:
+            # Column-G gate: A's filter does not run on this code path
+            # (analyze bypasses prepare_breathing_data), so apply it here.
+            if rec.file_basename not in _included:
+                return
+            geno = "Scn1a+/-" if rec.genotype == "het" else "WT"
+            if rec.risk is not None:
+                cond = rec.risk                       # exp1: "HR" / "LR"
+            elif rec.treatment is not None:
+                cond = treatment_word(rec.treatment)  # exp2: "vehicle" / "FFA"
+            else:
+                cond = None
+            label = group_label(geno, rec.age, cond)
+            breaths_acc, apnea_acc = population_pool.setdefault(label, ([], []))
+            breaths_acc.extend(result.breaths)
+            apnea_acc.extend(bool(a) for a in result.is_apnea)
+
+        population_sink = _accumulate
 
     # Group all *.csv in the preprocessed dir by basename + period.
     period_files: Dict[str, Dict[str, Path]] = {}
@@ -370,9 +421,16 @@ def analyze_experiment(
             recording, periods, config,
             interactive_dir=interactive_path,
             ictal_histograms_dir=histograms_path,
+            population_sink=population_sink,
         )
         metrics_rows.extend(m_rows)
         apnea_rows.extend(a_rows)
+
+    # Item F: render one pooled ictal histogram per analysis group, once,
+    # after every recording has contributed its ICTAL breaths.
+    if population_path is not None and population_pool:
+        from ..visualization.ictal_histograms import plot_population_ictal_histograms
+        plot_population_ictal_histograms(population_pool, population_path)
 
     breathing_df = _metrics_to_dataframe(metrics_rows)
     apnea_df = _apneas_to_dataframe(apnea_rows)

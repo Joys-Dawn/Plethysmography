@@ -20,8 +20,17 @@ from matplotlib.lines import Line2D
 from ..analysis.breath_segmentation import segment_breaths, Breath
 from ..core.config import BreathConfig
 from ..core.data_models import Period
-from ._common import display_label, filename_slug, make_axes, save_figure
-from .colors import italicize_scn1a
+from ._common import (
+    APNEA_DURATION_PARAMS,
+    add_apnea_duration_reference_line,
+    display_label,
+    filename_slug,
+    group_label,
+    make_axes,
+    save_figure,
+    treatment_word,
+)
+from .colors import MARKERS_BY_AGE, italicize_scn1a
 
 
 # Postictal binned plot config: 30 s bins for the first 5 min (10 bins).
@@ -30,19 +39,34 @@ _POSTICTAL_BIN_S = 30.0
 _POSTICTAL_N_BINS = 10
 _POSTICTAL_DURATION_S = _POSTICTAL_BIN_S * _POSTICTAL_N_BINS  # 300 s
 
-# Group definitions for postictal. Verbatim from old_code GROUPS at line 28.
+# Group definitions for postictal. Genotype/condition keys are unchanged
+# from old_code GROUPS (line 28); only the display-label word order is
+# canonicalized through ``group_label`` (Item C: genotype -> age ->
+# condition). Colors/markers are unchanged here; Item D recolors the
+# treatment palette below.
 # (display_name, genotype, condition_value, color, marker)
 _RISK_GROUPS: Tuple[Tuple[str, str, str, str, str], ...] = (
-    ("LR WT P22",        "WT",  "low_risk",  "#87CEEB", "o"),
-    ("HR WT P22",        "WT",  "high_risk", "#0000FF", "o"),
-    ("LR Scn1a+/- P22",  "het", "low_risk",  "#FFA07A", "o"),
-    ("HR Scn1a+/- P22",  "het", "high_risk", "#FF0000", "o"),
+    (group_label("WT", 22, "LR"),       "WT",  "low_risk",  "#87CEEB", "o"),
+    (group_label("WT", 22, "HR"),       "WT",  "high_risk", "#0000FF", "o"),
+    (group_label("Scn1a+/-", 22, "LR"), "het", "low_risk",  "#FFA07A", "o"),
+    (group_label("Scn1a+/-", 22, "HR"), "het", "high_risk", "#FF0000", "o"),
 )
+# Hexes mirror colors.TREATMENT_PALETTE[(genotype, treatment)] (Item D);
+# tuple order is aligned to those keys and asserted in test_palettes.py.
 _TREATMENT_GROUPS: Tuple[Tuple[str, str, str, str, str], ...] = (
-    ("WT Vehicle P22",         "WT",  "Vehicle", "#87CEEB", "o"),
-    ("WT FFA P22",             "WT",  "FFA",     "#0000FF", "o"),
-    ("Scn1a+/- Vehicle P22",   "het", "Vehicle", "#FFA07A", "o"),
-    ("Scn1a+/- FFA P22",       "het", "FFA",     "#FF0000", "o"),
+    (group_label("WT", 22, treatment_word("Vehicle")),       "WT",  "Vehicle", "#D3D3D3", "o"),
+    (group_label("WT", 22, treatment_word("FFA")),           "WT",  "FFA",     "#D8BFD8", "o"),
+    (group_label("Scn1a+/-", 22, treatment_word("Vehicle")), "het", "Vehicle", "#696969", "o"),
+    (group_label("Scn1a+/-", 22, treatment_word("FFA")),     "het", "FFA",     "#800080", "o"),
+)
+# Experiment 1b (Item G): the two Scn1a+/- developmental groups. Unlike the
+# risk/treatment layouts above this one spans BOTH ages (HR P19 vs LR P22),
+# so the P22-only rule in _plot_binned is suppressed for it. Colors/markers
+# mirror publication_plots._draw_developmental: full red ^ for HR P19, pale
+# red o for LR P22. Matched on (genotype, risk_clean).
+_DEVELOPMENTAL_GROUPS: Tuple[Tuple[str, str, str, str, str], ...] = (
+    (group_label("Scn1a+/-", 19, "HR"), "het", "high_risk", "#FF0000", MARKERS_BY_AGE[19]),
+    (group_label("Scn1a+/-", 22, "LR"), "het", "low_risk",  "#FFA07A", MARKERS_BY_AGE[22]),
 )
 
 
@@ -146,7 +170,20 @@ def _plot_binned(
 ) -> List[Path]:
     if n_bins <= 0:
         return []
-    groups = _TREATMENT_GROUPS if condition_col == "treatment_clean" else _RISK_GROUPS
+    # Item G: "developmental" is a 2-group (HR P19 vs LR P22) variant that
+    # must keep P19; the risk/treatment layouts stay P22-only as old code had.
+    if condition_col == "developmental":
+        groups = _DEVELOPMENTAL_GROUPS
+        cond_meta_key = "risk_clean"
+        p22_only = False
+    elif condition_col == "treatment_clean":
+        groups = _TREATMENT_GROUPS
+        cond_meta_key = "treatment_clean"
+        p22_only = True
+    else:
+        groups = _RISK_GROUPS
+        cond_meta_key = "risk_clean"
+        p22_only = True
 
     # Collect per-recording per-bin values:
     # by_group[group_key][parameter] = list of (n_bins,) arrays, one per recording.
@@ -157,10 +194,9 @@ def _plot_binned(
         meta = metadata.get(basename)
         if meta is None:
             continue
-        # P22 only -- old code excludes P19 entirely from postictal binned.
-        if str(meta.get("age", "")).upper().lstrip("P") != "22":
+        if p22_only and str(meta.get("age", "")).upper().lstrip("P") != "22":
             continue
-        cond_value = str(meta.get(condition_col, ""))
+        cond_value = str(meta.get(cond_meta_key, ""))
         genotype = str(meta.get("genotype", ""))
         group_match = next(
             (g for g in groups if g[1] == genotype and g[2] == cond_value), None,
@@ -226,6 +262,8 @@ def _plot_binned(
         ]
         labels = [italicize_scn1a(g[0]) for g in groups]
         ax.legend(handles, labels, fontsize=14, frameon=False, loc="best")
+        if parameter in APNEA_DURATION_PARAMS:
+            add_apnea_duration_reference_line(ax)
         out = output_dir / f"{title_prefix}_{filename_slug(parameter)}.png"
         save_figure(fig, out)
         saved.append(out)

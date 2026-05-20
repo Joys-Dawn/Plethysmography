@@ -33,12 +33,12 @@ import pytest
 _PAIRS: tuple[tuple[str, Path, Path], ...] = (
     (
         "experiment 1 (LR vs HR)",
-        Path("results/experiment 1 - LR vs HR comparison/breathing_analysis_results.csv"),
+        Path("results/Experiment 1 - LR vs HR comparison - publication plots and stats/breathing_analysis_results.csv"),
         Path("old_results/breathing_analysis_results.csv"),
     ),
     (
         "experiment 2 (chronic FFA)",
-        Path("results/experiment 2 - chronic FFA vs vehicle/breathing_analysis_results.csv"),
+        Path("results/Experiment 2 - chronic FFA vs vehicle - publication plots and stats/breathing_analysis_results.csv"),
         Path("old_results/breathing_analysis_results_FFA.csv"),
     ),
 )

@@ -24,7 +24,7 @@ tail".
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -84,20 +84,24 @@ def write_ictal_breaths_csv(
     return out_path
 
 
-def plot_ictal_histograms(
-    file_basename: str,
+def _render_two_panel(
+    title_label: str,
     breaths: Sequence[Breath],
     is_apnea: Sequence[bool],
-    output_dir: Path,
+    out_path: Path,
     *,
     bin_count: int = _BIN_COUNT,
 ) -> Optional[Path]:
-    """Render the per-trace 2-panel histogram (Ttot + PIF-to-PEF).
+    """Render the shared 2-panel ictal histogram (Ttot + PIF-to-PEF) to
+    ``out_path``.
 
-    Returns the saved PNG path, or ``None`` if there are no finite values to
-    plot. The Ttot panel overlays apneic breaths in red so the reader can
-    see how much of the distribution's right tail is driven by apneas vs.
-    "merely long" non-apneic breaths.
+    This is the single rendering core used by both the per-recording
+    :func:`plot_ictal_histograms` (``title_label`` = file basename) and the
+    pooled :func:`plot_population_ictal_histograms` (``title_label`` = the
+    canonical group label). Returns the written path, or ``None`` when there
+    is nothing finite to plot (callers treat ``None`` as "skip this one").
+    The parent directory is created only when a figure is actually saved, so
+    a no-data call leaves the filesystem untouched.
     """
     if not breaths:
         return None
@@ -115,8 +119,8 @@ def plot_ictal_histograms(
     if not ttot_finite.any() and not pd_finite.any():
         return None
 
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
     import matplotlib.pyplot as plt  # local import keeps top-level import clean
 
@@ -139,7 +143,7 @@ def plot_ictal_histograms(
                 label=f"apneic (n={apnea.size})",
             )
         ax_ttot.legend(loc="upper right", fontsize=10, frameon=False)
-    ax_ttot.set_title(f"{file_basename} — Ictal Ttot")
+    ax_ttot.set_title(f"{title_label} — Ictal Ttot")
     ax_ttot.set_xlabel("Ttot (ms)")
     ax_ttot.set_ylabel("Breath count")
     ax_ttot.spines["top"].set_visible(False)
@@ -152,15 +156,81 @@ def plot_ictal_histograms(
             all_pd, bins=bin_count, color=_NORMAL_COLOR, alpha=0.85,
             edgecolor="black", linewidth=0.4,
         )
-    ax_pd.set_title(f"{file_basename} — Ictal PIF-to-PEF")
+    ax_pd.set_title(f"{title_label} — Ictal PIF-to-PEF")
     ax_pd.set_xlabel("PIF-to-PEF amplitude (mL/s)")
     ax_pd.set_ylabel("Breath count")
     ax_pd.spines["top"].set_visible(False)
     ax_pd.spines["right"].set_visible(False)
 
-    out_path = output_dir / f"{file_basename}_ictal_histograms.png"
     save_figure(fig, out_path)
     return out_path
+
+
+def plot_ictal_histograms(
+    file_basename: str,
+    breaths: Sequence[Breath],
+    is_apnea: Sequence[bool],
+    output_dir: Path,
+    *,
+    bin_count: int = _BIN_COUNT,
+) -> Optional[Path]:
+    """Render the per-trace 2-panel histogram (Ttot + PIF-to-PEF).
+
+    Returns the saved PNG path, or ``None`` if there are no finite values to
+    plot. The Ttot panel overlays apneic breaths in red so the reader can
+    see how much of the distribution's right tail is driven by apneas vs.
+    "merely long" non-apneic breaths.
+    """
+    output_dir = Path(output_dir)
+    return _render_two_panel(
+        file_basename, breaths, is_apnea,
+        output_dir / f"{file_basename}_ictal_histograms.png",
+        bin_count=bin_count,
+    )
+
+
+def _population_slug(label: str) -> str:
+    """Filesystem-safe token for a canonical group label. ``Scn1a+/-``
+    collapses to ``Scn1a`` (the ``/`` is a path separator on POSIX and the
+    ``+/-`` is mathtext noise in a filename); spaces become underscores.
+    e.g. ``"Scn1a+/- P22 vehicle"`` -> ``"Scn1a_P22_vehicle"``.
+    """
+    return (
+        label.replace("Scn1a+/-", "Scn1a")
+        .replace("/", "_")
+        .replace("+", "")
+        .replace(" ", "_")
+    )
+
+
+def plot_population_ictal_histograms(
+    groups: Mapping[str, Tuple[Sequence[Breath], Sequence[bool]]],
+    output_dir: Path,
+    *,
+    bin_count: int = _BIN_COUNT,
+) -> List[Path]:
+    """Render one pooled 2-panel ictal histogram per analysis group (Item F).
+
+    ``groups`` maps a canonical ``group_label`` string (e.g. ``"WT P22 LR"``,
+    ``"Scn1a+/- P22 vehicle"``, ``"Scn1a+/- P19 SUDEP"``) to that group's
+    pooled ``(breaths, is_apnea)`` accumulated across every included
+    recording's ICTAL period. Same Ttot + PIF-to-PEF panels and blue
+    (non-apneic) / red (apneic) split as the per-recording plot — only the
+    pool and the title/label differ. A group with no finite values is
+    skipped (``_render_two_panel`` returns ``None``). Returns the list of
+    PNGs actually written.
+    """
+    output_dir = Path(output_dir)
+    saved: List[Path] = []
+    for label, (breaths, is_apnea) in groups.items():
+        out = _render_two_panel(
+            label, breaths, is_apnea,
+            output_dir / f"{_population_slug(label)}_ictal_histograms.png",
+            bin_count=bin_count,
+        )
+        if out is not None:
+            saved.append(out)
+    return saved
 
 
 def emit_ictal_histograms(

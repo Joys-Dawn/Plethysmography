@@ -10,6 +10,7 @@ breathing CSV and merges with the cleaned data log produced by
 
 from __future__ import annotations
 
+import logging
 import warnings
 from contextlib import contextmanager
 from typing import Iterable, Iterator, List, Optional, Sequence
@@ -18,6 +19,9 @@ import numpy as np
 import pandas as pd
 
 from ..core.metadata import is_excluded
+
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +175,7 @@ def prepare_breathing_data(
     """
     from ..data_loading.data_log import (
         COL_FILENAME, COL_GENOTYPE, COL_AGE, COL_CONDITION, COL_SUDEP,
+        COL_INCLUDE,
     )
 
     log = data_log_df.copy()
@@ -183,6 +188,29 @@ def prepare_breathing_data(
     merged = breathing_df.merge(log, on="file_basename", how="inner")
     if merged.empty:
         return merged
+
+    # Column G — authoritative file-level population filter. Applied
+    # unconditionally (independent of the period-level SUDEP exclusions
+    # below): any recording not explicitly marked include == 1 is dropped
+    # from every population-level stat and plot.
+    if COL_INCLUDE not in merged.columns:
+        raise KeyError(
+            f"Data log is missing the required column {COL_INCLUDE!r} "
+            f"(Column G, 'include for population analysis'); cannot apply the "
+            f"population filter."
+        )
+    include_num = pd.to_numeric(merged[COL_INCLUDE], errors="coerce")
+    drop_mask = include_num != 1
+    if drop_mask.any():
+        dropped = sorted(merged.loc[drop_mask, "file_basename"].unique())
+        logger.info(
+            "population filter (Column G): dropping %d recording(s) "
+            "with include != 1: %s",
+            len(dropped), ", ".join(dropped),
+        )
+        merged = merged[~drop_mask].reset_index(drop=True)
+        if merged.empty:
+            return merged
 
     if apply_sudep_exclusions:
         keep_mask = merged.apply(

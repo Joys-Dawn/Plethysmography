@@ -17,14 +17,24 @@ connecting line and error bars on top. Filenames mirror
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 from matplotlib.axes import Axes
 from matplotlib.lines import Line2D
 
-from ._common import display_label, filename_slug, make_axes, save_figure
+from ._common import (
+    APNEA_DURATION_PARAMS,
+    across_style_params,
+    add_apnea_duration_reference_line,
+    display_label,
+    filename_slug,
+    group_label,
+    make_axes,
+    save_figure,
+    treatment_word,
+)
 from .colors import (
     DEFAULT_PALETTE,
     HR_TIMESERIES_PALETTE,
@@ -81,6 +91,67 @@ def plot_across_periods(
     return out_path
 
 
+# ---------------------------------------------------------------------------
+# Experiment 1b (Item G): 2-trace developmental across-periods timeseries.
+# The exp1 _draw_across is P22-/condition-hardwired (4 cells, P22-only across),
+# so the developmental pair gets its own net-new driver rather than a
+# degenerate filtered reuse. Two traces: HR Scn1a+/- P19 (full red, ^) and
+# LR Scn1a+/- P22 (pale red, o), connected across the four named periods.
+# ---------------------------------------------------------------------------
+_DEVELOPMENTAL_TS_GROUPS: Tuple[Tuple[str, str, str, str, str], ...] = (
+    (group_label("Scn1a+/-", 19, "HR"), "het", "high_risk", "#FF0000", MARKERS_BY_AGE[19]),
+    (group_label("Scn1a+/-", 22, "LR"), "het", "low_risk",  "#FFA07A", MARKERS_BY_AGE[22]),
+)
+
+# Mirrors publication_plots._detect_parameters (kept inline to avoid a
+# publication_plots -> timeseries_plots import cycle).
+_DEVELOPMENTAL_TS_PARAMS: Tuple[str, ...] = (
+    "mean_ttot_ms_no_apnea", "mean_frequency_bpm_no_apnea",
+    "mean_ti_ms_no_apnea", "mean_te_ms_no_apnea",
+    "mean_pif_centered_ml_s", "mean_pef_centered_ml_s", "mean_pif_to_pef_ml_s",
+    "mean_tv_ml", "sigh_rate_per_min", "mean_sigh_duration_ms",
+    "cov_instant_freq", "alternate_cov", "pif_to_pef_cov",
+    "apnea_rate_per_min", "apnea_mean_ms_imputed",
+    "apnea_burden_ms_per_min",
+)
+
+
+def draw_developmental_timeseries(
+    data: pd.DataFrame,
+    output_dir: Path,
+    *,
+    parameters: Optional[Sequence[str]] = None,
+) -> List[Path]:
+    """Connected-line timeseries for the experiment-1b developmental pair
+    (HR Scn1a+/- P19 vs LR Scn1a+/- P22), one file per parameter.
+
+    ``data`` must already carry ``genotype_clean`` / ``risk_clean`` /
+    ``age_clean`` (from ``stats.helpers.prepare_breathing_data``) and should
+    be the exp1b 2-group cohort — within that cohort ``risk_clean`` uniquely
+    identifies each trace, so traces are matched on
+    ``(genotype_clean, risk_clean)``. Apnea-duration uses the real V1
+    ``apnea_mean_ms`` (via :func:`across_style_params`), same as every other
+    across-periods timeseries. Returns the saved paths.
+    """
+    output_dir = Path(output_dir)
+    if parameters is None:
+        parameters = [p for p in _DEVELOPMENTAL_TS_PARAMS if p in data.columns]
+
+    saved: List[Path] = []
+    for parameter in across_style_params(parameters):
+        if parameter not in data.columns:
+            continue
+        out = _draw_traces(
+            data, parameter, _DEVELOPMENTAL_TS_GROUPS,
+            match_cols=("genotype_clean", "risk_clean"),
+            output_path=output_dir
+            / f"Timeseries_{filename_slug(parameter)}_developmental.png",
+        )
+        if out is not None:
+            saved.append(out)
+    return saved
+
+
 def _draw_across(
     p22_data: pd.DataFrame,
     parameter: str,
@@ -89,18 +160,19 @@ def _draw_across(
     output_path: Path,
 ) -> Optional[Path]:
     if condition_col == "treatment_clean":
+        # across is P22-only; full 3-feature label genotype -> P22 -> drug.
         groups = [
-            ("WT Vehicle",            "WT",  "Vehicle", TREATMENT_PALETTE[("WT",  "Vehicle")], "o"),
-            ("WT FFA",                "WT",  "FFA",     TREATMENT_PALETTE[("WT",  "FFA")],     "o"),
-            ("Scn1a+/- Vehicle",      "het", "Vehicle", TREATMENT_PALETTE[("het", "Vehicle")], "o"),
-            ("Scn1a+/- FFA",          "het", "FFA",     TREATMENT_PALETTE[("het", "FFA")],     "o"),
+            (group_label("WT", 22, treatment_word("Vehicle")),       "WT",  "Vehicle", TREATMENT_PALETTE[("WT",  "Vehicle")], "o"),
+            (group_label("WT", 22, treatment_word("FFA")),           "WT",  "FFA",     TREATMENT_PALETTE[("WT",  "FFA")],     "o"),
+            (group_label("Scn1a+/-", 22, treatment_word("Vehicle")), "het", "Vehicle", TREATMENT_PALETTE[("het", "Vehicle")], "o"),
+            (group_label("Scn1a+/-", 22, treatment_word("FFA")),     "het", "FFA",     TREATMENT_PALETTE[("het", "FFA")],     "o"),
         ]
     else:
         groups = [
-            ("LR WT P22",            "WT",  "low_risk",  DEFAULT_PALETTE[("WT",  "low_risk")],  "o"),
-            ("HR WT P22",            "WT",  "high_risk", DEFAULT_PALETTE[("WT",  "high_risk")], "o"),
-            ("LR Scn1a+/- P22",      "het", "low_risk",  DEFAULT_PALETTE[("het", "low_risk")],  "o"),
-            ("HR Scn1a+/- P22",      "het", "high_risk", DEFAULT_PALETTE[("het", "high_risk")], "o"),
+            (group_label("WT", 22, "LR"),       "WT",  "low_risk",  DEFAULT_PALETTE[("WT",  "low_risk")],  "o"),
+            (group_label("WT", 22, "HR"),       "WT",  "high_risk", DEFAULT_PALETTE[("WT",  "high_risk")], "o"),
+            (group_label("Scn1a+/-", 22, "LR"), "het", "low_risk",  DEFAULT_PALETTE[("het", "low_risk")],  "o"),
+            (group_label("Scn1a+/-", 22, "HR"), "het", "high_risk", DEFAULT_PALETTE[("het", "high_risk")], "o"),
         ]
     return _draw_traces(
         p22_data, parameter, groups,
@@ -117,19 +189,20 @@ def _draw_within(
     output_path: Path,
 ) -> Optional[Path]:
     if condition_col == "treatment_clean":
-        # FFA cohort within plot: same four (genotype, age) cells as exp 1.
+        # FFA cohort within plot: same four (genotype, age) cells as exp 1;
+        # cells pool FFA + Vehicle so no treatment word applies (Item C).
         groups = [
-            ("WT P19",          "WT",  19, HR_TIMESERIES_PALETTE[("WT",  19)], MARKERS_BY_AGE[19]),
-            ("WT P22",          "WT",  22, HR_TIMESERIES_PALETTE[("WT",  22)], MARKERS_BY_AGE[22]),
-            ("Scn1a+/- P19",    "het", 19, HR_TIMESERIES_PALETTE[("het", 19)], MARKERS_BY_AGE[19]),
-            ("Scn1a+/- P22",    "het", 22, HR_TIMESERIES_PALETTE[("het", 22)], MARKERS_BY_AGE[22]),
+            (group_label("WT", 19, None),       "WT",  19, HR_TIMESERIES_PALETTE[("WT",  19)], MARKERS_BY_AGE[19]),
+            (group_label("WT", 22, None),       "WT",  22, HR_TIMESERIES_PALETTE[("WT",  22)], MARKERS_BY_AGE[22]),
+            (group_label("Scn1a+/-", 19, None), "het", 19, HR_TIMESERIES_PALETTE[("het", 19)], MARKERS_BY_AGE[19]),
+            (group_label("Scn1a+/-", 22, None), "het", 22, HR_TIMESERIES_PALETTE[("het", 22)], MARKERS_BY_AGE[22]),
         ]
     else:
         groups = [
-            ("HR WT P19",       "WT",  19, HR_TIMESERIES_PALETTE[("WT",  19)], MARKERS_BY_AGE[19]),
-            ("HR WT P22",       "WT",  22, HR_TIMESERIES_PALETTE[("WT",  22)], MARKERS_BY_AGE[22]),
-            ("HR Scn1a+/- P19", "het", 19, HR_TIMESERIES_PALETTE[("het", 19)], MARKERS_BY_AGE[19]),
-            ("HR Scn1a+/- P22", "het", 22, HR_TIMESERIES_PALETTE[("het", 22)], MARKERS_BY_AGE[22]),
+            (group_label("WT", 19, "HR"),       "WT",  19, HR_TIMESERIES_PALETTE[("WT",  19)], MARKERS_BY_AGE[19]),
+            (group_label("WT", 22, "HR"),       "WT",  22, HR_TIMESERIES_PALETTE[("WT",  22)], MARKERS_BY_AGE[22]),
+            (group_label("Scn1a+/-", 19, "HR"), "het", 19, HR_TIMESERIES_PALETTE[("het", 19)], MARKERS_BY_AGE[19]),
+            (group_label("Scn1a+/-", 22, "HR"), "het", 22, HR_TIMESERIES_PALETTE[("het", 22)], MARKERS_BY_AGE[22]),
         ]
     return _draw_traces(
         hr_data, parameter, groups,
@@ -182,6 +255,8 @@ def _draw_traces(
         return None
 
     _format_axes(ax, parameter, groups)
+    if parameter in APNEA_DURATION_PARAMS:
+        add_apnea_duration_reference_line(ax)
     save_figure(fig, output_path)
     return output_path
 

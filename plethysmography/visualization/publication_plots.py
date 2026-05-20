@@ -24,7 +24,19 @@ import pandas as pd
 from matplotlib.axes import Axes
 from matplotlib.lines import Line2D
 
-from ._common import display_label, filename_slug, global_ylim, make_axes, save_figure
+from ._common import (
+    APNEA_DURATION_PARAMS,
+    across_style_params,
+    add_apnea_duration_reference_line,
+    display_label,
+    filename_slug,
+    global_ylim,
+    group_label,
+    make_axes,
+    save_figure,
+    treatment_word,
+    within_style_params,
+)
 from .bar_plots import plot_within_period
 from .binned_plots import plot_ictal_binned, plot_postictal_binned
 from .colors import (
@@ -73,7 +85,9 @@ def generate_publication_plots(
     saved: Dict[str, List[Path]] = {"within": [], "timeseries": [], "postictal": [], "ictal": []}
 
     within_dir = output_dir / "Within each time period"
-    for param in parameters:
+    # Within-period strips emit BOTH apnea-duration variants (V1 real +
+    # V2 imputed); the across timeseries uses the real durations only.
+    for param in within_style_params(parameters):
         ylim = global_ylim(
             breathing_df, param, _PERIODS_TO_PLOT, condition_col=condition_col,
         )
@@ -99,7 +113,7 @@ def generate_publication_plots(
             saved["within"].append(path)
 
     across_dir = output_dir / "Across time periods"
-    for param in parameters:
+    for param in across_style_params(parameters):
         path = plot_across_periods(
             breathing_df, param, across_dir,
             condition_col=condition_col,
@@ -150,7 +164,8 @@ def plot_developmental_comparison(
         return []
 
     saved: List[Path] = []
-    for param in parameters:
+    # Developmental strips are within-style: emit V1 (real) + V2 (imputed).
+    for param in within_style_params(parameters):
         if param not in df.columns:
             continue
         ylim = global_ylim(breathing_df, param, _PERIODS_TO_PLOT)
@@ -198,9 +213,9 @@ def _draw_period_duration_plots(
     if not p22_scn.empty:
         path = _draw_two_category_period_duration(
             [
-                ("LR Scn1a+/-\nP22", "#FFA07A", "o",
+                (group_label("Scn1a+/-", 22, "LR"), "#FFA07A", "o",
                  p22_scn[p22_scn["risk_clean"] == "low_risk"]["period_duration_s"]),
-                ("HR Scn1a+/-\nP22", "#FF0000", "o",
+                (group_label("Scn1a+/-", 22, "HR"), "#FF0000", "o",
                  p22_scn[p22_scn["risk_clean"] == "high_risk"]["period_duration_s"]),
             ],
             output_path=output_dir / "Period_Duration_Ictal_across.png",
@@ -216,9 +231,9 @@ def _draw_period_duration_plots(
     if not hr_scn.empty:
         path = _draw_two_category_period_duration(
             [
-                ("HR Scn1a+/-\nP19", "#FF0000", "^",
+                (group_label("Scn1a+/-", 19, "HR"), "#FF0000", "^",
                  hr_scn[hr_scn["age_clean"] == 19]["period_duration_s"]),
-                ("HR Scn1a+/-\nP22", "#FF0000", "o",
+                (group_label("Scn1a+/-", 22, "HR"), "#FF0000", "o",
                  hr_scn[hr_scn["age_clean"] == 22]["period_duration_s"]),
             ],
             output_path=output_dir / "Period_Duration_Ictal_within.png",
@@ -282,42 +297,24 @@ def _draw_developmental(
     """One panel: two cells (HR Scn1a+/- P19, LR Scn1a+/- P22) with red and
     pale-red colors and ^ vs o markers, black mean +/- SEM marker."""
     categories = [
-        ("HR Scn1a+/- P19", "#FF0000", "^", hr_p19),
-        ("LR Scn1a+/- P22", "#FFA07A", "o", lr_p22),
+        (group_label("Scn1a+/-", 19, "HR"), "#FF0000", "^", hr_p19),
+        (group_label("Scn1a+/-", 22, "LR"), "#FFA07A", "o", lr_p22),
     ]
     fig, ax = make_axes(figsize=_FIG_SIZE_DEVELOPMENTAL)
     rng = np.random.default_rng(2)
     means, sems, x_positions = [], [], []
     for i, (label, color, marker, raw) in enumerate(categories):
-        # Legacy fallback for plain ``apnea_mean_ms``: 0-apnea traces are
-        # plotted as grey markers at y=0. The default plot list now uses
-        # ``apnea_mean_ms_imputed`` (no NaNs by construction); this branch
-        # remains so callers passing the legacy column still render.
-        if parameter == "apnea_mean_ms":
-            valid = raw.dropna()
-            nan_count = int(raw.isna().sum())
-            if not valid.empty:
-                xs = i + rng.uniform(-0.15, 0.15, size=len(valid))
-                ax.scatter(xs, valid, color=color, alpha=0.7, s=150, marker=marker,
-                           edgecolors="black", linewidth=0.5)
-            if nan_count > 0:
-                xs = i + rng.uniform(-0.15, 0.15, size=nan_count)
-                ax.scatter(xs, np.zeros(nan_count), color="grey", alpha=0.7,
-                           s=150, marker=marker, edgecolors="black", linewidth=0.5)
-            if not valid.empty:
-                means.append(float(valid.mean()))
-                sems.append(_sem(valid))
-                x_positions.append(i)
-        else:
-            valid = raw.dropna()
-            if valid.empty:
-                continue
-            xs = i + rng.uniform(-0.15, 0.15, size=len(valid))
-            ax.scatter(xs, valid, color=color, alpha=0.7, s=150, marker=marker,
-                       edgecolors="black", linewidth=0.5)
-            means.append(float(valid.mean()))
-            sems.append(_sem(valid))
-            x_positions.append(i)
+        # Grey marker-at-0 special-case for apnea_mean_ms removed; V1 plots
+        # >=1-apnea traces only, V2 (imputed) has no NaNs (Item B).
+        valid = raw.dropna()
+        if valid.empty:
+            continue
+        xs = i + rng.uniform(-0.15, 0.15, size=len(valid))
+        ax.scatter(xs, valid, color=color, alpha=0.7, s=150, marker=marker,
+                   edgecolors="black", linewidth=0.5)
+        means.append(float(valid.mean()))
+        sems.append(_sem(valid))
+        x_positions.append(i)
 
     if not means:
         import matplotlib.pyplot as plt
@@ -333,7 +330,8 @@ def _draw_developmental(
     ax.set_xticks([0, 1])
     ax.set_xlim(-0.6, 1.4)
     ax.set_xticklabels(
-        [italicize_scn1a("HR Scn1a+/-\nP19"), italicize_scn1a("LR Scn1a+/-\nP22")],
+        [italicize_scn1a(group_label("Scn1a+/-", 19, "HR")),
+         italicize_scn1a(group_label("Scn1a+/-", 22, "LR"))],
         fontsize=32,
     )
     ax.xaxis.set_tick_params(rotation=45)
@@ -341,6 +339,8 @@ def _draw_developmental(
     ax.spines["right"].set_visible(False)
     if ylim is not None:
         ax.set_ylim(ylim)
+    if parameter in APNEA_DURATION_PARAMS:
+        add_apnea_duration_reference_line(ax)
     save_figure(fig, output_path)
     return output_path
 
@@ -375,10 +375,10 @@ def plot_ffa_subgroups(
             if param not in breathing_df.columns:
                 continue
             specs = [
-                {"label": "WT Vehicle",       "genotype_clean": "WT",  "treatment_clean": "Vehicle", "color": TREATMENT_PALETTE[("WT",  "Vehicle")], "marker": marker},
-                {"label": "WT FFA",            "genotype_clean": "WT",  "treatment_clean": "FFA",     "color": TREATMENT_PALETTE[("WT",  "FFA")],     "marker": marker},
-                {"label": "Scn1a+/- Vehicle", "genotype_clean": "het", "treatment_clean": "Vehicle", "color": TREATMENT_PALETTE[("het", "Vehicle")], "marker": marker},
-                {"label": "Scn1a+/- FFA",     "genotype_clean": "het", "treatment_clean": "FFA",     "color": TREATMENT_PALETTE[("het", "FFA")],     "marker": marker},
+                {"label": group_label("WT", age_value, treatment_word("Vehicle")),       "genotype_clean": "WT",  "treatment_clean": "Vehicle", "color": TREATMENT_PALETTE[("WT",  "Vehicle")], "marker": marker},
+                {"label": group_label("WT", age_value, treatment_word("FFA")),            "genotype_clean": "WT",  "treatment_clean": "FFA",     "color": TREATMENT_PALETTE[("WT",  "FFA")],     "marker": marker},
+                {"label": group_label("Scn1a+/-", age_value, treatment_word("Vehicle")),  "genotype_clean": "het", "treatment_clean": "Vehicle", "color": TREATMENT_PALETTE[("het", "Vehicle")], "marker": marker},
+                {"label": group_label("Scn1a+/-", age_value, treatment_word("FFA")),      "genotype_clean": "het", "treatment_clean": "FFA",     "color": TREATMENT_PALETTE[("het", "FFA")],     "marker": marker},
             ]
             sub = breathing_df[breathing_df["age_clean"] == age_value]
             path = _draw_ffa_timeseries(
@@ -394,10 +394,10 @@ def plot_ffa_subgroups(
             if param not in breathing_df.columns:
                 continue
             specs = [
-                {"label": "WT P19",        "genotype_clean": "WT",  "treatment_clean": treatment, "age_clean": 19, "color": TREATMENT_PALETTE[("WT",  treatment)], "marker": "^"},
-                {"label": "WT P22",        "genotype_clean": "WT",  "treatment_clean": treatment, "age_clean": 22, "color": TREATMENT_PALETTE[("WT",  treatment)], "marker": "o"},
-                {"label": "Scn1a+/- P19",  "genotype_clean": "het", "treatment_clean": treatment, "age_clean": 19, "color": TREATMENT_PALETTE[("het", treatment)], "marker": "^"},
-                {"label": "Scn1a+/- P22",  "genotype_clean": "het", "treatment_clean": treatment, "age_clean": 22, "color": TREATMENT_PALETTE[("het", treatment)], "marker": "o"},
+                {"label": group_label("WT", 19, treatment_word(treatment)),       "genotype_clean": "WT",  "treatment_clean": treatment, "age_clean": 19, "color": TREATMENT_PALETTE[("WT",  treatment)], "marker": "^"},
+                {"label": group_label("WT", 22, treatment_word(treatment)),       "genotype_clean": "WT",  "treatment_clean": treatment, "age_clean": 22, "color": TREATMENT_PALETTE[("WT",  treatment)], "marker": "o"},
+                {"label": group_label("Scn1a+/-", 19, treatment_word(treatment)), "genotype_clean": "het", "treatment_clean": treatment, "age_clean": 19, "color": TREATMENT_PALETTE[("het", treatment)], "marker": "^"},
+                {"label": group_label("Scn1a+/-", 22, treatment_word(treatment)), "genotype_clean": "het", "treatment_clean": treatment, "age_clean": 22, "color": TREATMENT_PALETTE[("het", treatment)], "marker": "o"},
             ]
             sub = breathing_df[breathing_df["treatment_clean"].astype(str) == treatment]
             path = _draw_ffa_timeseries(
@@ -412,11 +412,12 @@ def plot_ffa_subgroups(
         for param in parameters:
             if param not in breathing_df.columns:
                 continue
+            geno_disp = "Scn1a+/-" if geno_value == "het" else "WT"
             specs = [
-                {"label": "P19 Vehicle", "genotype_clean": geno_value, "treatment_clean": "Vehicle", "age_clean": 19, "color": TREATMENT_PALETTE[(geno_value, "Vehicle")], "marker": "^"},
-                {"label": "P22 Vehicle", "genotype_clean": geno_value, "treatment_clean": "Vehicle", "age_clean": 22, "color": TREATMENT_PALETTE[(geno_value, "Vehicle")], "marker": "o"},
-                {"label": "P19 FFA",     "genotype_clean": geno_value, "treatment_clean": "FFA",     "age_clean": 19, "color": TREATMENT_PALETTE[(geno_value, "FFA")],     "marker": "^"},
-                {"label": "P22 FFA",     "genotype_clean": geno_value, "treatment_clean": "FFA",     "age_clean": 22, "color": TREATMENT_PALETTE[(geno_value, "FFA")],     "marker": "o"},
+                {"label": group_label(geno_disp, 19, treatment_word("Vehicle")), "genotype_clean": geno_value, "treatment_clean": "Vehicle", "age_clean": 19, "color": TREATMENT_PALETTE[(geno_value, "Vehicle")], "marker": "^"},
+                {"label": group_label(geno_disp, 22, treatment_word("Vehicle")), "genotype_clean": geno_value, "treatment_clean": "Vehicle", "age_clean": 22, "color": TREATMENT_PALETTE[(geno_value, "Vehicle")], "marker": "o"},
+                {"label": group_label(geno_disp, 19, treatment_word("FFA")),     "genotype_clean": geno_value, "treatment_clean": "FFA",     "age_clean": 19, "color": TREATMENT_PALETTE[(geno_value, "FFA")],     "marker": "^"},
+                {"label": group_label(geno_disp, 22, treatment_word("FFA")),     "genotype_clean": geno_value, "treatment_clean": "FFA",     "age_clean": 22, "color": TREATMENT_PALETTE[(geno_value, "FFA")],     "marker": "o"},
             ]
             sub = breathing_df[breathing_df["genotype_clean"].astype(str) == geno_value]
             path = _draw_ffa_timeseries(
@@ -476,6 +477,8 @@ def _draw_ffa_timeseries(
         return None
 
     _format_axes_ffa(ax, parameter, specs)
+    if parameter in APNEA_DURATION_PARAMS:
+        add_apnea_duration_reference_line(ax)
     save_figure(fig, output_path)
     return output_path
 

@@ -5,7 +5,9 @@ Usage:
     python run.py exp1                          full experiment-1 pipeline
     python run.py exp2                          full experiment-2 pipeline
     python run.py exp4                          experiment-4 stats + plots only
-    python run.py all                           runs exp1, exp2, then exp4
+    python run.py exp1b                         experiment-1b developmental (reuses exp1)
+    python run.py sudep                          SUDEP fatal-seizure windows (Column J; bypasses cohort filter)
+    python run.py all                           runs exp1, exp2, exp4, then exp1b
     python run.py preprocess --experiment 1     only preprocess (no analysis)
     python run.py analyze --experiment 1        only analyze + stats + plots
     python run.py stats --experiment 1          only stats (uses cached CSV)
@@ -37,7 +39,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=("exp1", "exp2", "exp4", "all", "preprocess", "analyze", "stats", "plots", "normalize-filenames"),
+        choices=("exp1", "exp2", "exp4", "exp1b", "sudep", "all", "preprocess", "analyze", "stats", "plots", "normalize-filenames"),
     )
     parser.add_argument(
         "--experiment", type=int, choices=(1, 2),
@@ -68,6 +70,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.command in ("exp4", "all"):
         from plethysmography.pipelines import experiment4
         experiment4.run()
+    if args.command in ("exp1b", "all"):
+        # exp1b reuses exp1's breathing CSV + preprocessed CSVs, so under
+        # "all" it runs after exp1 (whose block above has already executed).
+        from plethysmography.pipelines import experiment1b
+        experiment1b.run(config=config)
+    if args.command == "sudep":
+        # SUDEP fatal-seizure windows (Item H). Standalone — NOT folded
+        # into "all": it builds its cohort straight from Column J and
+        # deliberately bypasses the Column-G population filter (the
+        # near-SUDEP 250304 4056 p22 is G=1 yet must be included).
+        from plethysmography.pipelines import sudep_events
+        sudep_events.run(config=config)
     if args.command in ("preprocess", "analyze", "stats", "plots"):
         if args.experiment is None:
             parser.error(f"--experiment is required for {args.command}")

@@ -30,6 +30,7 @@ from ._common import (
     RESULTS_ROOT,
     analyze_all,
     baseline_median_ttot_by_basename,
+    experiment_output_dirs,
     load_period_data_for_bins,
     metadata_for_bins,
     preprocess_all,
@@ -55,14 +56,17 @@ def run(
     registry = get_experiment_registry(EXPERIMENT_ID)
     cohort_dir = data_root / registry["cohort_folder"]
     preprocessed_dir = cohort_dir / registry["preprocessed_subfolder"]
-    results_dir = results_root / registry["results_folder"]
+    interactive_root, pub_root = experiment_output_dirs(registry, results_root)
 
     recordings = load_recordings_for_experiment(EXPERIMENT_ID, data_root=data_root)
     logger.info("experiment 2: %d recordings loaded", len(recordings))
 
-    traces_dir = results_dir / "trace_plots"
-    interactive_dir = results_dir / "interactive"
-    ictal_histograms_dir = results_dir / "Ictal_Histograms"
+    # Item E: plotly HTML -> interactive_root; everything else -> pub_root.
+    traces_dir = pub_root / "trace_plots"
+    interactive_dir = interactive_root
+    ictal_histograms_dir = pub_root / "Ictal_Histograms"
+    # Item F: pooled per-group ictal histograms live under plots/.
+    population_ictal_dir = pub_root / "plots" / "Ictal_Histograms_population"
 
     if do_preprocess:
         recordings = preprocess_all(
@@ -77,10 +81,11 @@ def run(
             recordings, config, preprocessed_dir,
             interactive_dir=interactive_dir,
             ictal_histograms_dir=ictal_histograms_dir,
+            population_ictal_dir=population_ictal_dir,
         )
-        write_breathing_outputs(breathing_df, apnea_df, results_dir)
-    elif (results_dir / "breathing_analysis_results.csv").exists():
-        breathing_df = pd.read_csv(results_dir / "breathing_analysis_results.csv")
+        write_breathing_outputs(breathing_df, apnea_df, pub_root)
+    elif (pub_root / "breathing_analysis_results.csv").exists():
+        breathing_df = pd.read_csv(pub_root / "breathing_analysis_results.csv")
 
     if breathing_df.empty:
         logger.warning("breathing_df is empty; skipping stats and plots")
@@ -93,13 +98,13 @@ def run(
             condition_col="treatment_clean",
             condition_levels=("FFA", "Vehicle"),
         )
-        stats_dir = results_dir / "stats"
+        stats_dir = pub_root / "stats"
         stats_dir.mkdir(parents=True, exist_ok=True)
         write_stats_xlsx(rows, stats_dir / "statistical_results.xlsx")
 
     if do_plots:
         merged = prepare_breathing_data(breathing_df, load_data_log())
-        plot_dir = results_dir / "plots"
+        plot_dir = pub_root / "plots"
         plot_dir.mkdir(parents=True, exist_ok=True)
         postictal_data = load_period_data_for_bins(
             recordings, preprocessed_dir, "Immediate Postictal",
