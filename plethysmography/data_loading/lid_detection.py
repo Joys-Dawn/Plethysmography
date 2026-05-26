@@ -93,18 +93,59 @@ def _pass1_threshold_spikes(
 ) -> np.ndarray:
     """Find samples where ``|signal| > spike_sigma * std(signal)``, then drop
     any spike that follows the immediately-prior spike by less than
-    ``min_spike_distance_ms`` (matches old code's consecutive-spike filter)."""
+    ``min_spike_distance_ms`` (matches old code's consecutive-spike filter).
+
+    Additionally — and this is the only behavioral deviation from the old
+    algorithm — also keep the **last** above-threshold sample of any maximal
+    consecutive above-threshold run lasting at least
+    ``long_run_min_duration_s`` seconds. This catches the trailing edge of
+    long, tall lid-open plateaus where the signal stays continuously above
+    threshold (no mid-plateau dip), in which case the first-per-gap-subrun
+    rule alone would emit just one candidate for the entire plateau and the
+    close-edge transient would be invisible. Purely additive: short runs and
+    plateaus that already produced multiple candidates via mid-run dips are
+    unaffected (any duplicate index is removed by the final ``sorted(set(...))``).
+    """
     threshold = cfg.spike_sigma * float(np.std(signal))
-    spike_indices = np.where(np.abs(signal) > threshold)[0]
+    above_mask = np.abs(signal) > threshold
+    spike_indices = np.where(above_mask)[0]
     if spike_indices.size == 0:
         return spike_indices
 
+    # Existing behavior: keep first per gap-separated sub-run.
     min_gap = max(1, int(round(fs * cfg.min_spike_distance_ms / 1000.0)))
     kept = [int(spike_indices[0])]
     for i in range(1, len(spike_indices)):
         if (spike_indices[i] - spike_indices[i - 1]) > min_gap:
             kept.append(int(spike_indices[i]))
-    return np.array(kept, dtype=int)
+
+    # Additive: trailing edge of long maximal-consecutive runs, gated by two
+    # filters: (a) the gap to the next run, and (b) the distance from the end
+    # of the recording. (a) guards against noisy plateaus that already produce
+    # many Pass 1 candidates from mid-plateau dips (each sub-run's rising edge
+    # already covers the previous sub-run's falling-edge vicinity).
+    # (b) guards against recording-end artifacts where the chamber is being
+    # moved as acquisition stops — those runs have no following run to filter
+    # them via (a) and would otherwise smuggle in a spurious candidate near
+    # EOF that confuses Pass 3's pairing.
+    int_mask = above_mask.astype(np.int8)
+    diff = np.diff(int_mask, prepend=0, append=0)
+    rising = np.where(diff == 1)[0]            # first above-threshold sample of each run
+    falling = np.where(diff == -1)[0] - 1      # last above-threshold sample of each run
+    min_run_samples = int(round(fs * cfg.long_run_min_duration_s))
+    n_samples = len(signal)
+    for i, (r, f) in enumerate(zip(rising, falling)):
+        if (f - r) < min_run_samples or f == r:
+            continue
+        # (a) Skip if another above-threshold run starts within the duration window.
+        if i + 1 < len(rising) and (rising[i + 1] - f) < min_run_samples:
+            continue
+        # (b) Skip if the falling edge sits within the duration window of EOF.
+        if (n_samples - 1 - f) < min_run_samples:
+            continue
+        kept.append(int(f))
+
+    return np.array(sorted(set(kept)), dtype=int)
 
 
 # ----------------------------------------------------------------------------

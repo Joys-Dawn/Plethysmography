@@ -45,6 +45,23 @@ _PAIRS: tuple[tuple[str, Path, Path], ...] = (
 
 _EXEMPT_PERIODS = {"Habituation", "Ictal"}
 
+# Per-file exemptions: files whose corrected lid detection now diverges from
+# the byte-locked old_results baseline by more than the 5 % tolerance, where
+# the divergence is an intentional CORRECTION of pre-existing buggy detection
+# (not a regression).
+#
+# 260117 5311 p22 (exp1, LR vs HR): the old algorithm placed close-1 at
+#   ~924 s — 7 s after open-1 at ~917 s — because the lid-open plateau was
+#   continuously above threshold and the original Pass 1 captured only the
+#   leading-edge sample. The corrected Pass 1 (long-run trailing-edge
+#   detection) places close-1 at ~1244 s, properly excluding the 320 s
+#   lid-open plateau from the Baseline period. The OLD Baseline thus
+#   contained ~14 % lid-open contamination at +73 mV. New Baseline width
+#   is 1953 s vs the OLD 2272 s — verified by hand against the per-file
+#   trace plot. The shift propagates as ~14 % drift on period_duration_s
+#   and ~16 % drift on mean_frequency_bpm; both are corrections.
+_EXEMPT_FILES = {"260117 5311 p22"}
+
 _FREE_COLUMNS = {
     "sigh_rate_per_min", "mean_sigh_duration_ms",
     "apnea_rate_per_min", "apnea_mean_ms",
@@ -70,6 +87,8 @@ def test_breathing_csv_matches_old_within_tolerance(
 
     new = new[~new["period"].isin(_EXEMPT_PERIODS)]
     old = old[~old["period"].isin(_EXEMPT_PERIODS)]
+    new = new[~new["file_basename"].isin(_EXEMPT_FILES)]
+    old = old[~old["file_basename"].isin(_EXEMPT_FILES)]
 
     key_cols = ["file_basename", "period"]
     new = new.set_index(key_cols).sort_index()

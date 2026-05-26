@@ -46,6 +46,12 @@ class LidDetectionConfig:
     """3-pass spike detection for lid open/close events.
 
     Pass 1: |signal| > spike_sigma * std, drop spikes closer than min_spike_distance_ms.
+            ADDITIONALLY, the LAST above-threshold sample of any maximal-consecutive
+            run lasting at least ``long_run_min_duration_s`` seconds is kept as an
+            extra candidate. This catches the trailing edge of long, tall lid-open
+            plateaus where the signal sits continuously above threshold and the
+            original first-per-run logic would otherwise emit only one candidate
+            (rising edge) for the entire plateau.
     Pass 2: keep spike only if |1-min pre-mean - 1-min post-mean| > baseline_shift_sigma_threshold * std.
     Pass 3: pair opens and closes; close is valid only if no further spike within pair_close_window_s.
     Boundary walk: from each spike, walk samples (forward for closes, backward for opens) while
@@ -54,6 +60,7 @@ class LidDetectionConfig:
     """
     spike_sigma: float = 2.5
     min_spike_distance_ms: float = 1.0
+    long_run_min_duration_s: float = 5.0           # plateau-end detection threshold (Pass 1 addition)
     baseline_shift_sigma_threshold: float = 0.5
     pair_close_window_s: float = 900.0             # 15 min default; 5 min for one specific file (see metadata.py)
     boundary_walk_threshold: float = 5.0           # |signal - local_mean| threshold while walking
