@@ -1,21 +1,23 @@
 """
-Helpers shared by the experiment-1 and experiment-2 pipeline drivers.
-Experiment 4 reuses these but skips preprocessing / analysis (it loads
-existing breathing CSVs from experiments 1 + 2).
+Helpers shared by the experiment pipeline drivers.
+Experiment 4 reuses preprocessing artifacts from experiments 1 + 2 but does
+not recompute breathing parameters (it loads existing breathing CSVs).
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import pandas as pd
 
 from ..analysis.pipeline import analyze_experiment
 from ..core.config import PlethConfig
 from ..core.data_models import Recording
-from ..core.metadata import should_skip_preprocess
+from ..core.errors import MissingBaselineError, PreprocessingError
+from ..core.metadata import excluded_from_all_analysis, should_skip_preprocess
+from ..data_loading.data_log import get_experiment_registry
 from ..data_loading.edf_reader import read_edf_signal
 from ..preprocessing.pipeline import preprocess_recording
 
@@ -107,6 +109,8 @@ def preprocess_all(
                 traces_dir=traces_dir,
             )
             completed.append(rec)
+        except (MissingBaselineError, PreprocessingError):
+            raise
         except Exception as exc:  # pragma: no cover -- log and keep going
             logger.exception("Preprocess failed for %s: %s", rec.file_basename, exc)
     return completed
@@ -149,8 +153,13 @@ def _emit_cached_trace_plots(
 
 
 def _has_preprocessed_outputs(file_basename: str, preprocessed_dir: Path) -> bool:
-    pattern = f"{file_basename}_*.csv"
-    return any(preprocessed_dir.glob(pattern))
+    """Cached if Baseline exists, or if the file is excluded from all analysis
+    and has any period CSV (e.g. SUDEP 250423 4269 p22 with Habituation only)."""
+    if (preprocessed_dir / f"{file_basename}_Baseline.csv").exists():
+        return True
+    if excluded_from_all_analysis(file_basename):
+        return any(preprocessed_dir.glob(f"{file_basename}_*.csv"))
+    return False
 
 
 def analyze_all(
@@ -161,16 +170,23 @@ def analyze_all(
     interactive_dir: Path | None = None,
     ictal_histograms_dir: Path | None = None,
     population_ictal_dir: Path | None = None,
+    population_palette: Optional[Mapping[str, str]] = None,
+    population_ictal_layout: str = "single",
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Wrap :func:`plethysmography.analysis.pipeline.analyze_experiment`.
 
-    ``population_ictal_dir`` (Item F) is where the pooled per-group ictal
-    histograms are written; passed straight through."""
+    ``population_ictal_dir`` is the root for faceted population-ictal plots
+    (Section 2.1). ``population_ictal_layout`` selects the facet subfolders
+    (``exp1``, ``exp2``, ``exp3``, or ``single``). ``population_palette`` is
+    a ``{group_label: hex_color}`` map used to color each overlaid group.
+    """
     return analyze_experiment(
         list(recordings), preprocessed_dir, config,
         interactive_dir=interactive_dir,
         ictal_histograms_dir=ictal_histograms_dir,
         population_ictal_dir=population_ictal_dir,
+        population_palette=population_palette,
+        population_ictal_layout=population_ictal_layout,
     )
 
 
@@ -194,11 +210,31 @@ def write_breathing_outputs(
     return breathing_path, apnea_path
 
 
+def preprocessed_dir_for_recording(
+    recording: Recording,
+    data_root: Path,
+) -> Path:
+    """Return the preprocessed CSV folder for one recording's source cohort."""
+    exp2_folder = get_experiment_registry(2)["cohort_folder"]
+    if recording.cohort == exp2_folder:
+        registry = get_experiment_registry(2)
+    else:
+        registry = get_experiment_registry(1)
+    return Path(data_root) / registry["cohort_folder"] / registry["preprocessed_subfolder"]
+
+
 def metadata_for_bins(recordings: Sequence[Recording]) -> dict[str, dict[str, str]]:
-    """Build the ``{file_basename: {genotype, risk_clean / treatment_clean,
-    age}}`` mapping used by the binned-plot generators."""
+    """Build the ``{file_basename: {genotype, risk_clean / treatment_clean /
+    sudep_status, age}}`` mapping used by the binned-plot generators."""
     out: dict[str, dict[str, str]] = {}
     for rec in recordings:
+        if rec.is_survivor or rec.is_sudep:
+            out[rec.file_basename] = {
+                "genotype": rec.genotype,
+                "sudep_status": "survivor" if rec.is_survivor else "sudep",
+                "age": rec.age,
+            }
+            continue
         if rec.risk is not None:
             condition_value = "high_risk" if rec.risk == "HR" else "low_risk"
             cond_key = "risk_clean"
@@ -212,6 +248,34 @@ def metadata_for_bins(recordings: Sequence[Recording]) -> dict[str, dict[str, st
             cond_key: condition_value,
             "age": rec.age,
         }
+    return out
+
+
+def load_period_data_for_bins_mixed(
+    recordings: Sequence[Recording],
+    data_root: Path,
+    period_name: str,
+) -> List[Tuple[str, "np.ndarray", "np.ndarray", float]]:
+    """Like :func:`load_period_data_for_bins`, but each recording may live in
+    a different source experiment's preprocessed folder (experiment 4)."""
+    out: List[Tuple[str, "np.ndarray", "np.ndarray", float]] = []
+    for rec in recordings:
+        preprocessed_dir = preprocessed_dir_for_recording(rec, data_root)
+        out.extend(load_period_data_for_bins([rec], preprocessed_dir, period_name))
+    return out
+
+
+def baseline_median_ttot_by_basename_mixed(
+    recordings: Sequence[Recording],
+    data_root: Path,
+    config: PlethConfig,
+) -> dict[str, float]:
+    """Like :func:`baseline_median_ttot_by_basename`, but resolves each
+    recording's preprocessed CSV folder individually."""
+    out: dict[str, float] = {}
+    for rec in recordings:
+        preprocessed_dir = preprocessed_dir_for_recording(rec, data_root)
+        out.update(baseline_median_ttot_by_basename([rec], preprocessed_dir, config))
     return out
 
 

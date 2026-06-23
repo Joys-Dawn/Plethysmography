@@ -55,6 +55,12 @@ PER_FILE_LID_OVERRIDES: Dict[str, Dict[str, Any]] = {
         "type": "hardcoded_spike_times",
         "spike_times_s": [928.654, 1307.571, 3182.366, 3500.115, 3559.647],
     },
+    # Noisy plateaus and a weak second close; 3-pass detection finds only the
+    # first open/close pair. Hand-validated against Trace_plots/042826 5609 p22.
+    "042826 5609 p22": {
+        "type": "hardcoded_spike_times",
+        "spike_times_s": [948.4, 1295.0, 3318.6, 3560.0],
+    },
     # First close happened sooner than the 15-min default cutoff would allow.
     # Apply 5 min cutoff for the FIRST open/close pair only; subsequent pairs
     # use the default 15 min.
@@ -132,6 +138,11 @@ _validate_exclusions()
 def should_skip_preprocess(file_basename: str) -> bool:
     """True if the file should not even be preprocessed."""
     return "preprocess" in EXCLUSIONS.get(file_basename, [])
+
+
+def excluded_from_all_analysis(file_basename: str) -> bool:
+    """True if the file is preprocessed but excluded from every analysis period."""
+    return "all" in EXCLUSIONS.get(file_basename, [])
 
 
 def is_excluded(file_basename: str, period_name: Optional[str] = None) -> bool:

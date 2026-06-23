@@ -310,10 +310,11 @@ def run(
     df.to_csv(csv_path, index=False)
     logger.info("SUDEP: wrote %s (%d mice)", csv_path, len(df))
 
-    strips = plot_fatal_seizure_strips(df, pub_root / "plots")
+    # Section 1 layout: strip plots land directly under pub_root (no plots/
+    # wrapper).
+    strips = plot_fatal_seizure_strips(df, pub_root)
     logger.info(
-        "SUDEP: wrote %d strip plots under %s",
-        len(strips), pub_root / "plots",
+        "SUDEP: wrote %d strip plots under %s", len(strips), pub_root,
     )
 
 

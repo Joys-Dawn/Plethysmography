@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 #
 # Both the legacy column keys (used by binned_plots, which compute per-bin
 # values from raw signal) and the project-extension keys (``*_no_apnea``,
-# ``apnea_mean_ms_imputed``, ``apnea_burden_ms_per_min``) resolve to the
+# ``apnea_mean_ms_imputed``, ``apnea_burden_s_per_min``) resolve to the
 # same human-facing labels and slugs. They live in different output
 # directories (``Postictal_Binned/`` vs ``Within each time period/``), so
 # matching slugs do not collide on disk and the axis label reads cleanly
@@ -49,9 +49,9 @@ _PARAM_DISPLAY: Dict[str, Tuple[str, str]] = {
     # DISTINCT plots with distinct labels and slugs so the two PNGs no longer
     # collide on disk. Burden is its own parameter.
     "apnea_mean_ms":             ("Apnea duration (ms)",  "Apnea_duration_ms"),
-    "apnea_mean_ms_imputed":     ("Apnea or longest-breaths duration (ms)",
+    "apnea_mean_ms_imputed":     ("Apnea or longest-breaths\nduration (ms)",
                                   "Apnea_or_longest_breaths_duration_ms"),
-    "apnea_burden_ms_per_min":   ("Apnea burden (ms/min)", "Apnea_burden_ms_per_min"),
+    "apnea_burden_s_per_min":    ("Apnea burden (s/min)",  "Apnea_burden_s_per_min"),
     # Unchanged columns
     "mean_pif_centered_ml_s":    ("PIF (mL/s)",           "PIF_mL_s"),
     "mean_pef_centered_ml_s":    ("PEF (mL/s)",           "PEF_mL_s"),
@@ -59,8 +59,7 @@ _PARAM_DISPLAY: Dict[str, Tuple[str, str]] = {
     "mean_tv_ml":                ("Tv (mL)",              "Tv_mL"),
     "sigh_rate_per_min":         ("Sigh rate (/min)",     "Sigh_rate__min"),
     "mean_sigh_duration_ms":     ("Sigh duration (ms)",   "Sigh_duration_ms"),
-    "cov_instant_freq":          ("CoV (instantaneous)",  "CoV_instantaneous"),
-    "alternate_cov":             ("CoV",                  "CoV_alternate"),
+    "cov":                       ("CoV_IBI",            "CoV_IBI"),
     "pif_to_pef_cov":            ("CoV (PIF-to-PEF)",     "CoV_PIF_to_PEF"),
     "apnea_rate_per_min":        ("Apnea rate (/min)",    "Apnea_rate__min"),
 }
@@ -90,27 +89,23 @@ _APNEA_DUR_SET = set(APNEA_DURATION_PARAMS)
 
 def add_apnea_duration_reference_line(ax: "plt.Axes") -> None:
     """Draw the fixed 400 ms apnea-duration floor as a dashed grey horizontal
-    line.
+    line and anchor the y-axis lower bound at 0.
 
     The apnea threshold is ``max(2 x baseline median Ttot, 400 ms)``, so
     400 ms is the hard floor below which no breath can be flagged apneic.
-    The line gives the reader that anchor on every apnea-DURATION plot.
+    The reference line shows that anchor on every apnea-duration plot, and
+    the 0-anchor lets the reader read durations as multiples of the floor
+    rather than relative to whatever the cohort minimum happened to be.
 
     Call this only for parameters in :data:`APNEA_DURATION_PARAMS` (never on
-    apnea rate or apnea burden). When the current y-range sits entirely above
-    the floor (autoscaled real-duration V1 strips), the lower limit is
-    dropped just below 400 ms so the reference stays visible — a reference
-    line you cannot see is not a reference line.
+    apnea rate or apnea burden).
     """
     ax.axhline(
         _APNEA_DURATION_FLOOR_MS, ls="--", color="grey",
         linewidth=1.5, zorder=1,
     )
-    y0, y1 = ax.get_ylim()
-    if y0 > _APNEA_DURATION_FLOOR_MS:
-        span = y1 - _APNEA_DURATION_FLOOR_MS
-        margin = 0.02 * span if span > 0 else 8.0
-        ax.set_ylim(_APNEA_DURATION_FLOOR_MS - margin, y1)
+    _, y1 = ax.get_ylim()
+    ax.set_ylim(0.0, y1)
 
 
 def _expand_apnea_slot(parameters, replacement):
@@ -172,11 +167,52 @@ def group_label(genotype: str, age, condition: Optional[str] = None) -> str:
     return " ".join(parts)
 
 
+def two_line_label(label: str) -> str:
+    """Split a group label across two lines at the first space:
+    ``"WT P22 LR"`` -> ``"WT\\nP22 LR"``, ``"Scn1a+/- P22"`` ->
+    ``"Scn1a+/-\\nP22"``.
+
+    Used for the crowded x-tick labels on within-period strip plots where
+    four-cell genotype x age (or genotype x condition) labels otherwise
+    overlap when rotated. The genotype goes on the top line, the
+    age/condition tail on the bottom line. Returns the input unchanged when
+    it has fewer than two parts.
+    """
+    parts = str(label).split(" ", 1)
+    if len(parts) == 2:
+        return f"{parts[0]}\n{parts[1]}"
+    return label
+
+
 def treatment_word(treatment) -> str:
     """Display form of the treatment condition for group labels: ``vehicle``
     (lower-case) / ``FFA`` (upper-case), matching the locked label spec
     (e.g. ``"WT P19 vehicle"``, ``"Scn1a+/- P22 FFA"``)."""
     return "vehicle" if str(treatment).strip().lower().startswith("veh") else "FFA"
+
+
+def draw_mouse_age_pair_lines(
+    ax,
+    points_by_mouse: Dict[str, Dict[int, Tuple[float, float, str]]],
+    *,
+    line_alpha: float = 0.75,
+    line_width: float = 2.0,
+    zorder: int = 5,
+) -> None:
+    """Draw colored lines connecting P19 and P22 points for the same mouse.
+
+    ``points_by_mouse`` maps ``mouse_id`` -> ``{19: (x, y, color), 22: ...}``.
+    Lines use the P22 point color (full saturation) when both ages are present.
+    """
+    for by_age in points_by_mouse.values():
+        if 19 not in by_age or 22 not in by_age:
+            continue
+        x19, y19, _ = by_age[19]
+        x22, y22, c22 = by_age[22]
+        ax.plot(
+            [x19, x22], [y19, y22], color=c22, alpha=line_alpha,
+            linewidth=line_width, zorder=zorder, solid_capstyle="round",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -202,38 +238,97 @@ def global_ylim(
     condition_col: str = "risk_clean",
 ) -> Optional[Tuple[float, float]]:
     """Compute one (y_min, y_max) range across all four periods for a parameter,
-    so within/across/developmental plots of the same parameter share an axis.
+    so across-period timeseries of the same parameter share an axis.
 
-    Mirrors ``old_code/analyze_data.py:calculate_global_ylim_all_periods``. Pulls
-    values from both the P22 (across) and high-risk/treated (within) subsets
-    of every period, applies the apnea-duration grey-zero rule, and adds 2%
-    padding. Returns ``None`` if the parameter has no values anywhere.
+    For per-period strip plots prefer :func:`period_ylim`, which scales each
+    ``Time_period_<x>/`` folder independently.
+    """
+    values = _collect_strip_ylim_values(
+        data, parameter, periods, condition_col=condition_col,
+    )
+    return _ylim_from_values(values, parameter)
+
+
+def period_ylim(
+    data: pd.DataFrame,
+    parameter: str,
+    period: str,
+    *,
+    condition_col: str = "risk_clean",
+    extra_mask: Optional[pd.Series] = None,
+) -> Optional[Tuple[float, float]]:
+    """Compute (y_min, y_max) for strip plots at one named period.
+
+    When ``extra_mask`` is supplied it is AND-ed with the period filter so
+    facet families (by_age / by_drug / by_genotype) can share an axis within
+    one period while still scaling independently across periods.
+    """
+    values = _collect_strip_ylim_values(
+        data, parameter, [period], condition_col=condition_col,
+        extra_mask=extra_mask,
+    )
+    return _ylim_from_values(values, parameter)
+
+
+def _cohort_high_values(condition_col: str) -> tuple[str, ...]:
+    """Values of ``condition_col`` that define the within-period strip cohort."""
+    if condition_col == "treatment_clean":
+        return ("FFA", "Vehicle")
+    return ("high_risk",)
+
+
+def _collect_strip_ylim_values(
+    data: pd.DataFrame,
+    parameter: str,
+    periods,
+    *,
+    condition_col: str,
+    extra_mask: Optional[pd.Series] = None,
+) -> list[float]:
+    """Collect parameter values that will appear on strip plots.
+
+    When ``extra_mask`` is set (FFA facet strips), every row matching the
+    mask in each period is included — the caller defines the plotted cohort.
+
+    Otherwise (standard ``plot_within_period`` pair), include exactly the rows
+    shown on the across (P22) and within (high-cohort) panels:
+
+      across rows: ``age_clean == 22``
+      within rows: ``condition_col`` in :func:`_cohort_high_values`
+
+    Using the union prevents the old failure mode where P19 treatment-cohort
+    mice were omitted from the axis when ``condition_col`` defaulted to
+    ``risk_clean`` on FFA experiments.
     """
     if parameter not in data.columns:
-        return None
-    high_value = "Vehicle" if condition_col == "treatment_clean" else "high_risk"
-    high_values = ("FFA", "Vehicle") if condition_col == "treatment_clean" else ("high_risk",)
+        return []
+    high_values = _cohort_high_values(condition_col)
 
-    all_values = []
+    all_values: list[float] = []
     for period in periods:
         sub = data[data["period"] == period]
+        if extra_mask is not None:
+            sub = sub.loc[extra_mask.reindex(sub.index, fill_value=False)]
         if sub.empty:
             continue
-        p22 = sub[sub["age_clean"] == 22]
-        if not p22.empty:
-            all_values.extend(p22[parameter].dropna().tolist())
-        hi = sub[sub[condition_col].astype(str).isin(high_values)]
-        if not hi.empty:
-            all_values.extend(hi[parameter].dropna().tolist())
+        if extra_mask is not None:
+            plotted = sub
+        else:
+            plotted = sub[
+                (sub["age_clean"] == 22)
+                | sub[condition_col].astype(str).isin(high_values)
+            ]
+        all_values.extend(plotted[parameter].dropna().tolist())
+    return all_values
 
+
+def _ylim_from_values(
+    all_values: list[float],
+    parameter: str,
+) -> Optional[Tuple[float, float]]:
     if not all_values:
         return None
-    # Anchor y at 0 for the imputed apnea mean and apnea burden: zero is the
-    # natural baseline and the eye expects it. The real-duration
-    # ``apnea_mean_ms`` (V1) is autoscaled — it only ever holds >=1-apnea
-    # traces, all >= the 400 ms floor, so a zero anchor would waste the axis;
-    # the 400 ms reference line provides the floor anchor instead (Item B).
-    _zero_anchored = {"apnea_mean_ms_imputed", "apnea_burden_ms_per_min"}
+    _zero_anchored = {"apnea_mean_ms_imputed", "apnea_burden_s_per_min"}
     if parameter in _zero_anchored:
         y_min, y_max = 0.0, float(max(all_values))
     else:

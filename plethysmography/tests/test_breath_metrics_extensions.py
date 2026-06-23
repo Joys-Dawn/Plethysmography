@@ -7,7 +7,8 @@ Unit tests for the project-extension columns on :class:`BreathMetrics`:
   duration).
 * ``apnea_mean_ms_imputed`` — equal to ``apnea_mean_ms`` when ≥1 apneas
   are detected; otherwise the mean of the longest min(10, n) Ttots.
-* ``apnea_burden_ms_per_min`` — total real apnea time per minute of period.
+* ``apnea_burden_s_per_min`` — total real apnea time per minute of period,
+  expressed in seconds per minute.
 """
 
 from __future__ import annotations
@@ -153,10 +154,10 @@ def test_imputed_apnea_mean_is_nan_when_no_breaths():
 
 
 # ---------------------------------------------------------------------------
-# apnea_burden_ms_per_min
+# apnea_burden_s_per_min
 # ---------------------------------------------------------------------------
 def test_apnea_burden_is_total_apnea_time_per_minute():
-    """Two apneas of 800 + 1000 ms over a 60 s period -> burden = 1800 ms/min."""
+    """Two apneas of 800 + 1000 ms over a 60 s period -> burden = 1.8 s/min."""
     breaths = [_breath(200.0), _breath(800.0), _breath(1000.0)]
     is_apnea = [False, True, True]
     apneas = [_apnea(800.0), _apnea(1000.0)]
@@ -164,7 +165,7 @@ def test_apnea_burden_is_total_apnea_time_per_minute():
         file_basename="x", period_name="Ictal", period_duration_s=60.0,
         breaths=breaths, is_sigh=[False] * 3, apneas=apneas, is_apnea=is_apnea,
     )
-    assert metrics.apnea_burden_ms_per_min == pytest.approx(1800.0)
+    assert metrics.apnea_burden_s_per_min == pytest.approx(1.8)
 
 
 def test_apnea_burden_scales_with_period_duration():
@@ -181,7 +182,7 @@ def test_apnea_burden_scales_with_period_duration():
         file_basename="x", period_name="Ictal", period_duration_s=120.0,
         breaths=breaths, is_sigh=[False, False], apneas=apneas, is_apnea=is_apnea,
     )
-    assert short.apnea_burden_ms_per_min == pytest.approx(2.0 * long.apnea_burden_ms_per_min)
+    assert short.apnea_burden_s_per_min == pytest.approx(2.0 * long.apnea_burden_s_per_min)
 
 
 def test_apnea_burden_zero_when_no_apneas():
@@ -190,7 +191,7 @@ def test_apnea_burden_zero_when_no_apneas():
         file_basename="x", period_name="Baseline", period_duration_s=60.0,
         breaths=breaths, is_sigh=[False, False], apneas=[], is_apnea=[False, False],
     )
-    assert metrics.apnea_burden_ms_per_min == 0.0
+    assert metrics.apnea_burden_s_per_min == 0.0
 
 
 # ---------------------------------------------------------------------------

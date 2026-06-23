@@ -114,17 +114,18 @@ def test_run_creates_estyle_folders_and_uses_developmental_binned(
     # E-style sibling folders derived from the registry.
     assert pub_root.name.endswith("- publication plots and stats")
     assert interactive_root.name.endswith("- interactive plots")
-    # stats/ and plots/ were created under pub_root.
-    assert (pub_root / "stats").is_dir()
-    assert (pub_root / "plots").is_dir()
+    # Section 1: pub_root is the artifact root (no plots/ wrapper, no
+    # stats/ subfolder); stats xlsx + plot folders live directly under it.
+    assert pub_root.is_dir()
     # Every exp1 family ran its 2-group analog ...
     assert calls.get("within") and calls.get("across") and calls.get("stats")
     assert calls.get("preprocess") and "analyze" in calls
     # ... and the binned plots used the net-new developmental variant.
     assert binned_cond == ["developmental", "developmental"]
-    # population ictal dir was threaded into analyze_all.
+    # population ictal dir + palette were threaded into analyze_all.
     analyze_kwargs = calls["analyze"]
     assert "population_ictal_dir" in analyze_kwargs
+    assert "population_palette" in analyze_kwargs
 
 
 def test_run_bails_when_exp1_breathing_csv_absent(tmp_path: Path, monkeypatch, caplog):

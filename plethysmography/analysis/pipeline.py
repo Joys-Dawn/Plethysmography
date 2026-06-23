@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -41,7 +41,8 @@ from ..core.data_models import (
     Period,
     Recording,
 )
-from ..core.metadata import get_analysis_override
+from ..core.errors import MissingBaselineError
+from ..core.metadata import excluded_from_all_analysis, get_analysis_override
 from .apnea_detection import compute_apnea_threshold, detect_apneas
 from .baseline_cache import cache_from_breaths
 from .breath_metrics import compute_breath_metrics
@@ -216,6 +217,13 @@ def analyze_recording(
         (list of BreathMetrics rows, list of ApneaEvent rows, dict period_name -> breaths)
     """
     baseline_period = periods_by_name.get(BASELINE)
+    if baseline_period is None and not excluded_from_all_analysis(recording.file_basename):
+        raise MissingBaselineError(
+            f"{recording.file_basename}: no Baseline preprocessed CSV; "
+            f"found periods={sorted(periods_by_name)}. "
+            f"All downstream metrics would be invalid."
+        )
+
     baseline_result: Optional[PeriodAnalysisResult] = None
     if baseline_period is not None:
         baseline_result = analyze_period(
@@ -233,12 +241,6 @@ def analyze_recording(
             std_pif_to_pef_ml_s=0.0,
             n_breaths=0,
         )
-        if baseline_period is None:
-            logger.info(
-                "%s has no Baseline period; sigh and apnea thresholds for "
-                "other periods will fall back to per-period stats.",
-                recording.file_basename,
-            )
 
     metrics_rows: List[BreathMetrics] = []
     apnea_rows: List[ApneaEvent] = []
@@ -299,8 +301,7 @@ def analyze_recording(
                 metrics_rows.append(baseline_result.metrics)
                 apnea_rows.extend(baseline_result.apneas)
                 breaths_by_period[BASELINE] = baseline_result.breaths
-                if baseline_period is not None:
-                    _maybe_emit_interactive(baseline_period, baseline_result)
+                _maybe_emit_interactive(baseline_period, baseline_result)
             continue
         period = periods_by_name.get(name)
         if period is None:
@@ -332,6 +333,8 @@ def analyze_experiment(
     interactive_dir: Optional[str | Path] = None,
     ictal_histograms_dir: Optional[str | Path] = None,
     population_ictal_dir: Optional[str | Path] = None,
+    population_palette: Optional[Mapping[str, str]] = None,
+    population_ictal_layout: str = "single",
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Load preprocessed CSVs from ``preprocessed_dir`` and run the two-pass
     breath analysis for every recording in ``recordings``.
@@ -379,13 +382,18 @@ def analyze_experiment(
             if rec.file_basename not in _included:
                 return
             geno = "Scn1a+/-" if rec.genotype == "het" else "WT"
-            if rec.risk is not None:
+            if rec.is_survivor:
+                label = group_label(geno, rec.age, "Survivor")
+            elif rec.is_sudep:
+                label = group_label(geno, rec.age, "SUDEP")
+            elif rec.risk is not None:
                 cond = rec.risk                       # exp1: "HR" / "LR"
             elif rec.treatment is not None:
                 cond = treatment_word(rec.treatment)  # exp2: "vehicle" / "FFA"
             else:
                 cond = None
-            label = group_label(geno, rec.age, cond)
+            if not (rec.is_survivor or rec.is_sudep):
+                label = group_label(geno, rec.age, cond)
             breaths_acc, apnea_acc = population_pool.setdefault(label, ([], []))
             breaths_acc.extend(result.breaths)
             apnea_acc.extend(bool(a) for a in result.is_apnea)
@@ -426,11 +434,17 @@ def analyze_experiment(
         metrics_rows.extend(m_rows)
         apnea_rows.extend(a_rows)
 
-    # Item F: render one pooled ictal histogram per analysis group, once,
-    # after every recording has contributed its ICTAL breaths.
+    # Item F: render the two combo population-ictal histograms (Section 2.1),
+    # once, after every recording has contributed its ICTAL breaths.
     if population_path is not None and population_pool:
-        from ..visualization.ictal_histograms import plot_population_ictal_histograms
-        plot_population_ictal_histograms(population_pool, population_path)
+        from ..visualization.ictal_histograms import (
+            plot_population_ictal_histograms_faceted,
+        )
+        plot_population_ictal_histograms_faceted(
+            population_pool, population_path,
+            layout=population_ictal_layout,
+            group_colors=population_palette,
+        )
 
     breathing_df = _metrics_to_dataframe(metrics_rows)
     apnea_df = _apneas_to_dataframe(apnea_rows)
@@ -456,7 +470,7 @@ _METRICS_COLUMNS: Tuple[str, ...] = (
     "mean_ttot_ms", "mean_frequency_bpm", "mean_ti_ms", "mean_te_ms",
     "mean_pif_centered_ml_s", "mean_pef_centered_ml_s", "mean_pif_to_pef_ml_s",
     "mean_tv_ml", "sigh_rate_per_min", "mean_sigh_duration_ms",
-    "cov_instant_freq", "alternate_cov", "pif_to_pef_cov",
+    "cov", "pif_to_pef_cov",
     "apnea_rate_per_min", "apnea_mean_ms",
     "apnea_spont_rate_per_min", "apnea_spont_mean_ms",
     "apnea_postsigh_rate_per_min", "apnea_postsigh_mean_ms",
@@ -464,7 +478,7 @@ _METRICS_COLUMNS: Tuple[str, ...] = (
     # regression diff stays clean column-position-wise).
     "mean_ttot_ms_no_apnea", "mean_frequency_bpm_no_apnea",
     "mean_ti_ms_no_apnea", "mean_te_ms_no_apnea",
-    "apnea_mean_ms_imputed", "apnea_burden_ms_per_min",
+    "apnea_mean_ms_imputed", "apnea_burden_s_per_min",
 )
 
 _APNEA_COLUMNS: Tuple[str, ...] = (

@@ -4,7 +4,7 @@ End-to-end test that the stats runner reproduces the old xlsx layout when fed
 names and a sensible total row count.
 
 Because the project-extension columns (``*_no_apnea``,
-``apnea_mean_ms_imputed``, ``apnea_burden_ms_per_min``) don't exist in the
+``apnea_mean_ms_imputed``, ``apnea_burden_s_per_min``) don't exist in the
 old CSV, we alias them from the legacy columns before running stats so the
 layout check still exercises the full parameter set used by the new
 pipeline.
@@ -37,10 +37,12 @@ def _inject_project_extension_columns(merged: pd.DataFrame) -> pd.DataFrame:
     for new_col, legacy_col in aliases.items():
         if legacy_col in merged.columns:
             merged[new_col] = merged[legacy_col]
-    # Synthesize burden as rate * mean (ms/min); zero where mean is NaN.
+    # Synthesize burden as rate * mean (s/min); zero where mean is NaN.
+    # mean is in ms, so divide by 1000 to express the resulting burden in
+    # seconds per minute (matching ``apnea_burden_s_per_min``).
     if {"apnea_rate_per_min", "apnea_mean_ms"}.issubset(merged.columns):
-        merged["apnea_burden_ms_per_min"] = (
-            merged["apnea_rate_per_min"] * merged["apnea_mean_ms"]
+        merged["apnea_burden_s_per_min"] = (
+            merged["apnea_rate_per_min"] * merged["apnea_mean_ms"] / 1000.0
         ).fillna(0.0)
     return merged
 
@@ -76,11 +78,12 @@ def test_stats_runner_matches_old_layout(tmp_path):
         "P19 and 22 periods posthoc",
         "All Results",
     ]
-    # The reference count of 1029 came from the legacy 13-parameter run.
-    # Adding ``apnea_burden_ms_per_min`` to the Pauses_duration family
-    # contributes one parameter's worth of rows. Allow a generous window
-    # to absorb gating-driven post-hoc count variability.
+    # Reference window after Section 3.1: deleting ``cov_instant_freq`` from
+    # the CV_inst family removes ~100 rows; adding ``apnea_burden_s_per_min``
+    # adds ~50 — net contraction relative to the previous 1080-1180 window.
+    # Allow a generous bracket around the observed count to absorb
+    # gating-driven post-hoc variability.
     n_data_rows = wb["All Results"].max_row - 1
-    assert 1080 <= n_data_rows <= 1180, (
-        f"All Results count {n_data_rows} not in expected window 1080-1180"
+    assert 900 <= n_data_rows <= 1000, (
+        f"All Results count {n_data_rows} not in expected window 900-1000"
     )

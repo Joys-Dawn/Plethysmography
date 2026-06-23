@@ -51,7 +51,7 @@ def test_cohort_loader_and_registry():
     # disk. The loader returns all 26 Recording objects (those with missing
     # EDFs are silently skipped at ``preprocess_all`` time, identical to how
     # exp1 / exp2 already handle missing files).
-    assert len(recs) >= 22, f"expected at least 22 acute recordings, got {len(recs)}"
+    assert len(recs) == 26, f"expected 26 acute log rows, got {len(recs)}"
 
     # Every acute mouse is P22; treatment is FFA / Vehicle; risk + SUDEP +
     # survivor flags are unset.
@@ -68,11 +68,11 @@ def test_cohort_loader_and_registry():
         )
         assert r.cohort == "experiment 3 - acute FFA vs vehicle"
 
-    # Cell counts restricted to the EDFs actually on disk match the locked
-    # Context table (WT Vehicle=9 / WT FFA=4 / het Vehicle=4 / het FFA=5 = 22).
+    # Cell counts restricted to the EDFs actually on disk (full acute cohort
+    # when all log rows have matching EDFs).
     on_disk = [r for r in recs if r.edf_path.exists()]
-    assert len(on_disk) == 22, (
-        f"expected 22 acute EDFs on disk, got {len(on_disk)}"
+    assert len(on_disk) == 26, (
+        f"expected 26 acute EDFs on disk, got {len(on_disk)}"
     )
     counts: dict[tuple[str, str], int] = {}
     for r in on_disk:
@@ -81,9 +81,9 @@ def test_cohort_loader_and_registry():
         ) + 1
     assert counts == {
         ("WT", "Vehicle"): 9,
-        ("WT", "FFA"): 4,
+        ("WT", "FFA"): 7,
         ("het", "Vehicle"): 4,
-        ("het", "FFA"): 5,
+        ("het", "FFA"): 6,
     }, f"acute cell counts drifted: {counts}"
 
 
@@ -186,8 +186,9 @@ def test_run_creates_estyle_folders_and_forwards_acute_palette(
     )
     assert pub_root.name.endswith("- publication plots and stats")
     assert interactive_root.name.endswith("- interactive plots")
-    assert (pub_root / "stats").is_dir()
-    assert (pub_root / "plots").is_dir()
+    # Section 1: pub_root is the artifact root (no plots/ wrapper, no
+    # stats/ subfolder); stats xlsx + plot folders live directly under it.
+    assert pub_root.is_dir()
 
     # Every heavy step ran.
     assert calls.get("preprocess") is True
@@ -197,12 +198,23 @@ def test_run_creates_estyle_folders_and_forwards_acute_palette(
     stats_kwargs = calls["stats_kwargs"]
     assert stats_kwargs["condition_col"] == "treatment_clean"
     assert stats_kwargs["condition_levels"] == ("FFA", "Vehicle")
+    assert stats_kwargs["run_gee"] is False
+    assert stats_kwargs["run_developmental"] is False
+    assert stats_kwargs["run_across_periods_dependent"] is False
 
-    # generate_publication_plots received palette=ACUTE_FFA_PALETTE and the
-    # treatment_clean condition col.
+    # generate_publication_plots received palette=ACUTE_FFA_PALETTE, the
+    # treatment_clean condition col, do_within=False (skip within-age strips),
+    # and do_timeseries_within=False (P22-only acute cohort).
     plot_kwargs = calls["plot_kwargs"]
     assert plot_kwargs["condition_col"] == "treatment_clean"
     assert plot_kwargs["palette"] is ACUTE_FFA_PALETTE
+    assert plot_kwargs["do_within"] is False
+    assert plot_kwargs["do_timeseries_within"] is False
+
+    # analyze_all received population_palette (Section 2.1 wiring).
+    analyze_kwargs = calls["analyze"]
+    assert "population_palette" in analyze_kwargs
+    assert analyze_kwargs["population_palette"] is not None
 
     # plot_ffa_subgroups is intentionally NOT imported by experiment3.
     assert not hasattr(experiment3, "plot_ffa_subgroups"), (

@@ -27,11 +27,13 @@ from ._common import (
     APNEA_DURATION_PARAMS,
     add_apnea_duration_reference_line,
     display_label,
+    draw_mouse_age_pair_lines,
     filename_slug,
     group_label,
     make_axes,
     save_figure,
     treatment_word,
+    two_line_label,
 )
 from .colors import (
     DEFAULT_PALETTE,
@@ -64,6 +66,8 @@ def plot_within_period(
     display_period: Optional[str] = None,
     ylim: Optional[tuple] = None,
     palette: Optional[Dict[Tuple[str, str], str]] = None,
+    do_across: bool = True,
+    do_within: bool = True,
 ) -> Optional[Path]:
     """Generate the standard pair of plots for one (period, parameter):
 
@@ -76,8 +80,8 @@ def plot_within_period(
     line. Defaults to ``period`` itself; old code maps "Immediate Postictal"
     -> "Postictal" so we accept that mapping from the caller.
 
-    ``ylim`` is the shared (y_min, y_max) computed across all 4 periods (use
-    :func:`._common.global_ylim` to compute it once).
+    ``ylim`` is the shared (y_min, y_max) for this period (use
+    :func:`._common.period_ylim` — one range per ``Time_period_<x>/`` folder).
 
     Returns the path to the ``_across`` plot (or the ``_within`` plot, if
     P22 data is empty). Returns ``None`` if both subsets are empty.
@@ -87,31 +91,33 @@ def plot_within_period(
     display_period = display_period or period
 
     # ---- across (P22 only) -------------------------------------------------
-    p22 = data[(data["age_clean"] == 22) & (data["period"] == period)]
-    if not p22.empty:
-        out_path = _draw_across(
-            p22, parameter, display_period,
-            output_path=output_dir / f"{display_period}_{filename_slug(parameter)}_across.png",
-            condition_col=condition_col,
-            ylim=ylim,
-            palette=palette,
-        )
+    if do_across:
+        p22 = data[(data["age_clean"] == 22) & (data["period"] == period)]
+        if not p22.empty:
+            out_path = _draw_across(
+                p22, parameter, display_period,
+                output_path=output_dir / f"{display_period}_{filename_slug(parameter)}_across.png",
+                condition_col=condition_col,
+                ylim=ylim,
+                palette=palette,
+            )
 
     # ---- within (HR / FFA-cohort, P19 vs P22) ------------------------------
-    high_values = _high_values(condition_col)
-    hr = data[
-        (data[condition_col].astype(str).isin(high_values))
-        & (data["period"] == period)
-    ]
-    if not hr.empty:
-        within_path = _draw_within(
-            hr, parameter, display_period,
-            output_path=output_dir / f"{display_period}_{filename_slug(parameter)}_within.png",
-            condition_col=condition_col,
-            ylim=ylim,
-        )
-        if out_path is None:
-            out_path = within_path
+    if do_within:
+        high_values = _high_values(condition_col)
+        hr = data[
+            (data[condition_col].astype(str).isin(high_values))
+            & (data["period"] == period)
+        ]
+        if not hr.empty:
+            within_path = _draw_within(
+                hr, parameter, display_period,
+                output_path=output_dir / f"{display_period}_{filename_slug(parameter)}_within.png",
+                condition_col=condition_col,
+                ylim=ylim,
+            )
+            if out_path is None:
+                out_path = within_path
     return out_path
 
 
@@ -144,6 +150,7 @@ def _draw_across(
         ]
         effective_palette = palette or TREATMENT_PALETTE
         label_for = _treatment_label
+        marker_for = lambda combo: MARKERS_BY_AGE[22]
     else:
         categories = [
             ("WT", "low_risk"),
@@ -153,6 +160,7 @@ def _draw_across(
         ]
         effective_palette = DEFAULT_PALETTE
         label_for = _risk_label
+        marker_for = lambda combo: "o"
 
     fig, ax = make_axes(figsize=_FIG_SIZE)
     means, sems, x_positions = [], [], []
@@ -175,7 +183,7 @@ def _draw_across(
         color = effective_palette[combo]
         xs = i + rng.uniform(-_JITTER, _JITTER, size=len(valid))
         ax.scatter(xs, valid, color=color, alpha=_MARKER_ALPHA,
-                   s=_MARKER_SIZE, marker="o",
+                   s=_MARKER_SIZE, marker=marker_for(combo),
                    edgecolors="black", linewidth=_MARKER_EDGE_LINEWIDTH)
         means.append(float(valid.mean()))
         sems.append(_sem(valid))
@@ -223,25 +231,44 @@ def _draw_within(
     categories = [("WT", 19), ("WT", 22), ("het", 19), ("het", 22)]
     means, sems, x_positions = [], [], []
     rng = np.random.default_rng(1)
+    points_by_mouse: dict[str, dict[int, tuple[float, float, str]]] = {}
+    has_mouse_id = "mouse_id" in hr_data.columns
 
     for i, (gen, age) in enumerate(categories):
         mask = (
             (hr_data["genotype_clean"].astype(str) == gen)
             & (hr_data["age_clean"] == age)
         )
-        sub = hr_data.loc[mask, parameter]
+        if has_mouse_id:
+            sub_df = hr_data.loc[mask, [parameter, "mouse_id"]].dropna(subset=[parameter])
+        else:
+            sub_df = hr_data.loc[mask, [parameter]].dropna(subset=[parameter])
         marker = MARKERS_BY_AGE.get(int(age), "o")
         color = HR_BAR_PALETTE.get((gen, int(age)), "#6b7280")
 
-        # See _draw_across: the grey marker-at-0 special-case for
-        # apnea_mean_ms is removed; V1 plots >=1-apnea traces only (Item B).
-        valid = sub.dropna()
+        for _, row in sub_df.iterrows():
+            y = float(row[parameter])
+            x = i + rng.uniform(-_JITTER, _JITTER)
+            ax.scatter(x, y, color=color, alpha=_MARKER_ALPHA,
+                       s=_MARKER_SIZE, marker=marker,
+                       edgecolors="black", linewidth=_MARKER_EDGE_LINEWIDTH,
+                       zorder=6)
+            if has_mouse_id:
+                points_by_mouse.setdefault(str(row["mouse_id"]), {})[int(age)] = (
+                    x, y, color,
+                )
+
+    if has_mouse_id:
+        draw_mouse_age_pair_lines(ax, points_by_mouse)
+
+    for i, (gen, age) in enumerate(categories):
+        mask = (
+            (hr_data["genotype_clean"].astype(str) == gen)
+            & (hr_data["age_clean"] == age)
+        )
+        valid = hr_data.loc[mask, parameter].dropna()
         if valid.empty:
             continue
-        xs = i + rng.uniform(-_JITTER, _JITTER, size=len(valid))
-        ax.scatter(xs, valid, color=color, alpha=_MARKER_ALPHA,
-                   s=_MARKER_SIZE, marker=marker,
-                   edgecolors="black", linewidth=_MARKER_EDGE_LINEWIDTH)
         means.append(float(valid.mean()))
         sems.append(_sem(valid))
         x_positions.append(i)
@@ -286,13 +313,14 @@ def _high_values(condition_col: str):
 
 
 def _format_axes(ax: Axes, *, ylabel: str, xtick_labels) -> None:
-    """Apply old-code formatting: 40pt y-label, 32pt ticks, 45deg rotation,
+    """Apply old-code formatting: 40pt y-label, 32pt ticks, two-line x-tick
+    labels (genotype on top, age + condition on bottom), 45deg rotation,
     italic Scn1a, hidden top/right spines."""
     ax.set_ylabel(ylabel, fontsize=_YLABEL_FONTSIZE)
     ax.tick_params(axis="both", labelsize=_TICK_FONTSIZE)
     ax.set_xticks(range(len(xtick_labels)))
-    formatted = [italicize_scn1a(lbl) for lbl in xtick_labels]
-    ax.set_xticklabels(formatted, fontsize=_TICK_FONTSIZE)
+    formatted = [italicize_scn1a(two_line_label(lbl)) for lbl in xtick_labels]
+    ax.set_xticklabels(formatted, fontsize=_TICK_FONTSIZE, ha="center")
     ax.xaxis.set_tick_params(rotation=45)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)

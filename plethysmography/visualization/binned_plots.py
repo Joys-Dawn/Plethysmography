@@ -30,7 +30,13 @@ from ._common import (
     save_figure,
     treatment_word,
 )
-from .colors import MARKERS_BY_AGE, TREATMENT_PALETTE, italicize_scn1a
+from .colors import (
+    DEFAULT_PALETTE,
+    DS_PALE_ORANGE,
+    MARKERS_BY_AGE,
+    TREATMENT_PALETTE,
+    italicize_scn1a,
+)
 
 
 # Postictal binned plot config: 30 s bins for the first 5 min (10 bins).
@@ -46,26 +52,22 @@ _POSTICTAL_DURATION_S = _POSTICTAL_BIN_S * _POSTICTAL_N_BINS  # 300 s
 # treatment palette below.
 # (display_name, genotype, condition_value, color, marker)
 _RISK_GROUPS: Tuple[Tuple[str, str, str, str, str], ...] = (
-    (group_label("WT", 22, "LR"),       "WT",  "low_risk",  "#87CEEB", "o"),
-    (group_label("WT", 22, "HR"),       "WT",  "high_risk", "#0000FF", "o"),
-    (group_label("Scn1a+/-", 22, "LR"), "het", "low_risk",  "#FFA07A", "o"),
-    (group_label("Scn1a+/-", 22, "HR"), "het", "high_risk", "#FF0000", "o"),
+    (group_label("WT", 22, "LR"),       "WT",  "low_risk",  DEFAULT_PALETTE[("WT",  "low_risk")],  MARKERS_BY_AGE[22]),
+    (group_label("WT", 22, "HR"),       "WT",  "high_risk", DEFAULT_PALETTE[("WT",  "high_risk")], MARKERS_BY_AGE[22]),
+    (group_label("Scn1a+/-", 22, "LR"), "het", "low_risk",  DEFAULT_PALETTE[("het", "low_risk")],  MARKERS_BY_AGE[22]),
+    (group_label("Scn1a+/-", 22, "HR"), "het", "high_risk", DEFAULT_PALETTE[("het", "high_risk")], MARKERS_BY_AGE[22]),
 )
 def _build_treatment_groups(
     palette: Dict[Tuple[str, str], str],
 ) -> Tuple[Tuple[str, str, str, str, str], ...]:
     """Build the four-row treatment-cohort group tuple keyed against the
-    supplied palette. The labels / genotype tokens / treatment values /
-    markers are identical across experiments; only the colors swap.
-
-    Used by exp2 (chronic, default ``TREATMENT_PALETTE``) and exp3 (acute,
-    ``ACUTE_FFA_PALETTE`` injected via the binned-plot ``palette`` kwarg).
-    """
+    supplied palette. P22 binned plots always use circle markers; color
+    carries genotype x treatment."""
     return (
-        (group_label("WT", 22, treatment_word("Vehicle")),       "WT",  "Vehicle", palette[("WT", "Vehicle")],  "o"),
-        (group_label("WT", 22, treatment_word("FFA")),           "WT",  "FFA",     palette[("WT", "FFA")],      "o"),
-        (group_label("Scn1a+/-", 22, treatment_word("Vehicle")), "het", "Vehicle", palette[("het", "Vehicle")], "o"),
-        (group_label("Scn1a+/-", 22, treatment_word("FFA")),     "het", "FFA",     palette[("het", "FFA")],     "o"),
+        (group_label("WT", 22, treatment_word("Vehicle")),       "WT",  "Vehicle", palette[("WT", "Vehicle")],  MARKERS_BY_AGE[22]),
+        (group_label("WT", 22, treatment_word("FFA")),           "WT",  "FFA",     palette[("WT", "FFA")],      MARKERS_BY_AGE[22]),
+        (group_label("Scn1a+/-", 22, treatment_word("Vehicle")), "het", "Vehicle", palette[("het", "Vehicle")], MARKERS_BY_AGE[22]),
+        (group_label("Scn1a+/-", 22, treatment_word("FFA")),     "het", "FFA",     palette[("het", "FFA")],     MARKERS_BY_AGE[22]),
     )
 
 
@@ -81,8 +83,13 @@ _TREATMENT_GROUPS: Tuple[Tuple[str, str, str, str, str], ...] = (
 # mirror publication_plots._draw_developmental: full red ^ for HR P19, pale
 # red o for LR P22. Matched on (genotype, risk_clean).
 _DEVELOPMENTAL_GROUPS: Tuple[Tuple[str, str, str, str, str], ...] = (
-    (group_label("Scn1a+/-", 19, "HR"), "het", "high_risk", "#FF0000", MARKERS_BY_AGE[19]),
-    (group_label("Scn1a+/-", 22, "LR"), "het", "low_risk",  "#FFA07A", MARKERS_BY_AGE[22]),
+    (group_label("Scn1a+/-", 19, "HR"), "het", "high_risk", DS_PALE_ORANGE, MARKERS_BY_AGE[19]),
+    (group_label("Scn1a+/-", 22, "LR"), "het", "low_risk",  DS_PALE_ORANGE, MARKERS_BY_AGE[22]),
+)
+# Experiment 4: P19 het survivors vs eventual SUDEP (colors match survivor_plots).
+_SUDEP_STATUS_GROUPS: Tuple[Tuple[str, str, str, str, str], ...] = (
+    (group_label("Scn1a+/-", 19, "Survivor"), "het", "survivor", DS_PALE_ORANGE, MARKERS_BY_AGE[19]),
+    (group_label("Scn1a+/-", 19, "SUDEP"),     "het", "sudep",     "#FF0000",      MARKERS_BY_AGE[19]),
 )
 
 
@@ -99,8 +106,7 @@ _DEFAULT_PARAMETERS: Tuple[str, ...] = (
     "mean_sigh_duration_ms",
     "apnea_rate_per_min",
     "apnea_mean_ms",
-    "cov_instant_freq",
-    "alternate_cov",
+    "cov",
     "pif_to_pef_cov",
 )
 
@@ -168,6 +174,16 @@ def plot_ictal_binned(
     if duration_s <= 0:
         return []
     n_bins = max(1, int(np.ceil(duration_s / bin_s)))
+    # Section 2.2e: label every 5 seconds rather than every bin. The tick
+    # marks stay aligned with the data bins (one per ``bin_s``) so the line
+    # samples are still visible, but only every-5-second positions carry a
+    # text label so the axis reads cleanly on 60+ second seizures.
+    label_stride_s = 5.0
+    label_stride_bins = max(1, int(round(label_stride_s / bin_s)))
+    x_tick_labels = [
+        f"{int(i * bin_s)}s" if i % label_stride_bins == 0 else ""
+        for i in range(n_bins)
+    ]
     return _plot_binned(
         period_data, metadata, output_dir,
         bin_s=bin_s, n_bins=n_bins,
@@ -176,7 +192,7 @@ def plot_ictal_binned(
         breath_config=breath_config or BreathConfig(),
         condition_col=condition_col,
         baseline_median_ttot_ms=baseline_median_ttot_ms or {},
-        x_tick_labels=None,
+        x_tick_labels=x_tick_labels,
         palette=palette,
     )
 
@@ -203,6 +219,10 @@ def _plot_binned(
     if condition_col == "developmental":
         groups = _DEVELOPMENTAL_GROUPS
         cond_meta_key = "risk_clean"
+        p22_only = False
+    elif condition_col == "sudep_status":
+        groups = _SUDEP_STATUS_GROUPS
+        cond_meta_key = "sudep_status"
         p22_only = False
     elif condition_col == "treatment_clean":
         # exp3 (acute) injects ACUTE_FFA_PALETTE via the palette kwarg;
@@ -387,14 +407,9 @@ def _bin_metrics_per_recording(
         else:
             out["apnea_rate_per_min"][b_idx] = 0.0
         valid_ttot = ttot[ttot > 0]
-        if valid_ttot.size > 0:
-            inst = 1000.0 / valid_ttot
-            out["cov_instant_freq"][b_idx] = (
-                float(np.std(inst) / np.mean(inst)) if np.mean(inst) else float("nan")
-            )
-            if valid_ttot.size > 1:
-                rel = np.abs(np.diff(valid_ttot) / valid_ttot[1:])
-                out["alternate_cov"][b_idx] = float(np.mean(rel)) if rel.size else float("nan")
+        if valid_ttot.size > 1:
+            rel = np.abs(np.diff(valid_ttot) / valid_ttot[1:])
+            out["cov"][b_idx] = float(np.mean(rel)) if rel.size else float("nan")
         valid_pd = peak_diff[np.isfinite(peak_diff)]
         if valid_pd.size > 0 and np.mean(valid_pd) != 0:
             out["pif_to_pef_cov"][b_idx] = float(np.std(valid_pd) / np.mean(valid_pd))

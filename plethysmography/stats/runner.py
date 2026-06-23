@@ -86,6 +86,7 @@ def run_statistics(
     run_developmental: bool = True,
     run_survival: bool = True,
     run_across_periods: bool = True,
+    run_across_periods_dependent: bool = True,
     alpha: float = 0.05,
 ) -> List[Dict[str, Any]]:
     """Run the full stats suite on a prepared breathing DataFrame.
@@ -164,14 +165,15 @@ def run_statistics(
                     analysis_type="across_periods_independent",
                     condition_col=condition_col,
                 )
-            ap_dep = perform_across_periods_dependent_gee(data, param)
-            results_dict[param]["across_periods"]["dependent"] = ap_dep
-            if ap_dep is not None:
-                _emit_across_periods_rows(
-                    all_results, param, ap_dep,
-                    analysis_type="across_periods_dependent",
-                    condition_col="age_clean",
-                )
+            if run_across_periods_dependent:
+                ap_dep = perform_across_periods_dependent_gee(data, param)
+                results_dict[param]["across_periods"]["dependent"] = ap_dep
+                if ap_dep is not None:
+                    _emit_across_periods_rows(
+                        all_results, param, ap_dep,
+                        analysis_type="across_periods_dependent",
+                        condition_col="age_clean",
+                    )
 
     # =======================================================================
     # FDR correction on main effects
@@ -206,10 +208,12 @@ def run_statistics(
                 )
 
         if run_across_periods:
-            for design_key, fit_key, posthoc_fn in (
-                ("independent", "across_periods_independent", perform_across_periods_independent_posthoc),
-                ("dependent", "across_periods_dependent", perform_across_periods_dependent_posthoc),
-            ):
+            posthoc_designs = [("independent", "across_periods_independent", perform_across_periods_independent_posthoc)]
+            if run_across_periods_dependent:
+                posthoc_designs.append(
+                    ("dependent", "across_periods_dependent", perform_across_periods_dependent_posthoc),
+                )
+            for design_key, fit_key, posthoc_fn in posthoc_designs:
                 ap_result = results_dict[param]["across_periods"].get(design_key)
                 if ap_result is None:
                     continue

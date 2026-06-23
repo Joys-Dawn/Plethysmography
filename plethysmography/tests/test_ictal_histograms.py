@@ -19,10 +19,10 @@ import pytest
 
 from plethysmography.analysis.breath_segmentation import Breath
 from plethysmography.visualization.ictal_histograms import (
-    _population_slug,
     emit_ictal_histograms,
     plot_ictal_histograms,
     plot_population_ictal_histograms,
+    plot_population_ictal_histograms_faceted,
     write_ictal_breaths_csv,
 )
 
@@ -195,22 +195,15 @@ def test_analyze_experiment_skips_histograms_when_dir_is_none(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Item F: population (pooled-per-group) ictal histograms.
+# Section 2.1: combo population-ictal histograms (Ttot + PIF-to-PEF, one
+# file each, every group overlaid in its palette color).
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize(
-    ("label", "expected"),
-    [
-        ("WT P22 LR", "WT_P22_LR"),
-        ("Scn1a+/- P22 vehicle", "Scn1a_P22_vehicle"),
-        ("Scn1a+/- P19 SUDEP", "Scn1a_P19_SUDEP"),
-        ("Scn1a+/- P19 survivor", "Scn1a_P19_survivor"),
-    ],
-)
-def test_population_slug(label, expected):
-    assert _population_slug(label) == expected
-
-
-def test_plot_population_writes_one_png_per_group(tmp_path: Path):
+def test_plot_population_writes_two_combo_pngs(tmp_path: Path):
+    """The current Section 2.1 layout produces exactly two combo PNGs per
+    experiment regardless of how many analysis groups are passed in:
+    Population_ictal_Ttot.png and Population_ictal_PIF_to_PEF.png. Every
+    group is overlaid (and apneic breaths drawn as a hatched-fill subset on
+    the Ttot panel)."""
     groups = {
         "WT P22 LR": ([_breath(200.0), _breath(210.0)], [False, False]),
         "Scn1a+/- P22 HR": (
@@ -220,39 +213,71 @@ def test_plot_population_writes_one_png_per_group(tmp_path: Path):
     }
     saved = plot_population_ictal_histograms(groups, tmp_path)
     assert sorted(p.name for p in saved) == [
-        "Scn1a_P22_HR_ictal_histograms.png",
-        "WT_P22_LR_ictal_histograms.png",
+        "Population_ictal_PIF_to_PEF.png",
+        "Population_ictal_Ttot.png",
     ]
     for p in saved:
         assert p.exists() and p.stat().st_size > 0
 
 
 def test_plot_population_skips_group_with_no_breaths(tmp_path: Path):
-    """A group that pooled zero breaths (or no finite values) is skipped —
-    no PNG, not in the returned list (reuses the _render_two_panel None
-    contract)."""
+    """A group that pooled zero breaths is silently dropped from the combo
+    overlay; the remaining groups still produce both combo PNGs (no crash)."""
     groups = {
         "WT P22 LR": ([_breath(200.0)], [False]),
         "Scn1a+/- P22 HR": ([], []),
     }
     saved = plot_population_ictal_histograms(groups, tmp_path)
-    assert [p.name for p in saved] == ["WT_P22_LR_ictal_histograms.png"]
-    assert not (tmp_path / "Scn1a_P22_HR_ictal_histograms.png").exists()
+    assert sorted(p.name for p in saved) == [
+        "Population_ictal_PIF_to_PEF.png",
+        "Population_ictal_Ttot.png",
+    ]
+
+
+def test_plot_population_returns_empty_when_all_groups_empty(tmp_path: Path):
+    """If every group is empty (or only contains non-finite values), the
+    combo plotter writes nothing and the return list is empty."""
+    saved = plot_population_ictal_histograms(
+        {"WT P22 LR": ([], []), "Scn1a+/- P22 HR": ([], [])}, tmp_path,
+    )
+    assert saved == []
+    assert not (tmp_path / "Population_ictal_Ttot.png").exists()
+    assert not (tmp_path / "Population_ictal_PIF_to_PEF.png").exists()
+
+
+def test_plot_population_faceted_exp1_writes_across_and_within(tmp_path: Path):
+    """Exp1 layout splits overlays into across (P22) and within (HR) facets."""
+    groups = {
+        "WT P22 LR": ([_breath(200.0)], [False]),
+        "WT P22 HR": ([_breath(210.0)], [False]),
+        "Scn1a+/- P19 HR": ([_breath(220.0)], [False]),
+        "Scn1a+/- P22 HR": ([_breath(230.0)], [False]),
+        "WT P19 HR": ([_breath(240.0)], [False]),
+    }
+    saved = plot_population_ictal_histograms_faceted(
+        groups, tmp_path, layout="exp1",
+    )
+    assert (tmp_path / "across" / "Population_ictal_Ttot.png").exists()
+    assert (tmp_path / "within" / "Population_ictal_Ttot.png").exists()
+    assert not (tmp_path / "Population_ictal_Ttot.png").exists()
+    assert len(saved) == 4
 
 
 def test_population_accumulation_skips_g0_basename(tmp_path: Path, monkeypatch):
-    """The Item A↔F coupling guard: analyze_experiment's pool must drop a
+    """Item A↔F coupling guard: analyze_experiment's pool must drop a
     recording whose basename is NOT in population_included_basenames()
     (Column G == 0), even though that recording still gets a breathing row.
-    The two recordings map to distinct group labels so the skip is provable
-    by the presence/absence of each group's pooled PNG."""
+    The Section 2.1 combo plot is one file per metric, so the assertion is
+    on file existence: with only one group pooled, both combo PNGs still
+    appear (just with a single trace). With both groups dropped, no PNGs
+    appear."""
     from plethysmography.analysis.pipeline import analyze_experiment
     from plethysmography.core.config import PlethConfig
     from plethysmography.core.data_models import Recording
     import plethysmography.data_loading.data_log as data_log
 
     preprocessed = tmp_path / "preprocessed"
-    pop_dir = tmp_path / "Ictal_Histograms_population"
+    pop_dir = tmp_path / "Histograms_ictal_population"
     fs = 1000.0
     for basename in ("inc_subject", "exc_subject"):
         for period_token, duration_s, period_start, lid_close in (
@@ -286,9 +311,10 @@ def test_population_accumulation_skips_g0_basename(tmp_path: Path, monkeypatch):
     # exc_subject still produced a breathing row (G filter is a population
     # gate, not an analyze gate) ...
     assert set(breathing_df["file_basename"]) == {"inc_subject", "exc_subject"}
-    # ... but only the included recording's group histogram exists.
-    assert (pop_dir / "Scn1a_P22_HR_ictal_histograms.png").exists()
-    assert not (pop_dir / "WT_P22_LR_ictal_histograms.png").exists()
+    # ... and only the included recording contributed to the pool, so both
+    # combo PNGs got written (single-group overlay).
+    assert (pop_dir / "Population_ictal_Ttot.png").exists()
+    assert (pop_dir / "Population_ictal_PIF_to_PEF.png").exists()
 
 
 def test_population_pool_off_by_default_does_not_read_data_log(
@@ -325,4 +351,4 @@ def test_population_pool_off_by_default_does_not_read_data_log(
     )
     # No population_ictal_dir -> _boom must never fire.
     analyze_experiment([recording], preprocessed, PlethConfig())
-    assert not (tmp_path / "Ictal_Histograms_population").exists()
+    assert not (tmp_path / "Histograms_ictal_population").exists()

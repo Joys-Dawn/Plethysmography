@@ -126,12 +126,12 @@ class BreathMetrics:
     The original 23 fields preserve the exact schema of
     ``old_results/breathing_analysis_results.csv`` so the regression test
     compares like-for-like. The trailing 6 fields (``*_no_apnea``,
-    ``apnea_mean_ms_imputed``, ``apnea_burden_ms_per_min``) are project
+    ``apnea_mean_ms_imputed``, ``apnea_burden_s_per_min``) are project
     extensions added to: (a) recover statistical power for the apnea-duration
     comparison by imputing a top-Ttot proxy when no apneas are detected,
-    (b) report aggregate apnea burden, and (c) report respiratory timing with
-    apneic breaths excluded so the means / frequency are not skewed by long
-    apneic cycles.
+    (b) report aggregate apnea burden in seconds per minute, and (c) report
+    respiratory timing with apneic breaths excluded so the means / frequency
+    are not skewed by long apneic cycles.
 
     The output CSV is written by serializing a list[BreathMetrics] in this
     column order; downstream stats and plots reference the ``*_no_apnea`` /
@@ -152,8 +152,7 @@ class BreathMetrics:
     mean_tv_ml: float
     sigh_rate_per_min: float
     mean_sigh_duration_ms: float
-    cov_instant_freq: float
-    alternate_cov: float
+    cov: float
     pif_to_pef_cov: float
     apnea_rate_per_min: float
     apnea_mean_ms: float
@@ -167,7 +166,7 @@ class BreathMetrics:
     mean_ti_ms_no_apnea: float = float("nan")
     mean_te_ms_no_apnea: float = float("nan")
     apnea_mean_ms_imputed: float = float("nan")
-    apnea_burden_ms_per_min: float = 0.0
+    apnea_burden_s_per_min: float = 0.0
 
 
 @dataclass

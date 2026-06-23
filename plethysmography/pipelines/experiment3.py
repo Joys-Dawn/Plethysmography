@@ -24,11 +24,12 @@ Two intentional design differences vs experiment 2:
      Item G "ship degenerate panels" risk.
 
 Stats writer auto-skips empty sheets. For the acute single-age design the
-sheets that fill are: "P22 across groups ANOVA" (+ posthocs) and "P22
-groups and periods GEE" (+ posthocs). Convergence notes for the 3-way
-GEE land in the ``notes`` column of the All Results sheet — review per
-parameter; the smaller WT FFA / het Vehicle cells (n=4 each) sit at the
-lower end of stable identifiability for some apnea parameters.
+sheets that fill are: "P22 across groups ANOVA" (+ posthocs) and the
+independent "P22 groups and periods GEE" (+ posthocs). Per-period strip
+plots use the P22 ``_*_across.png`` layout only (no within-age strips or
+``Timeseries_*_within.png``); the per-period GEE and developmental t-tests
+and the dependent across-periods GEE are disabled because the cohort is
+P22-only.
 """
 
 from __future__ import annotations
@@ -51,7 +52,8 @@ from ..stats import (
     write_stats_xlsx,
 )
 from ..visualization import generate_publication_plots
-from ..visualization.colors import ACUTE_FFA_PALETTE
+from ..visualization._common import group_label, treatment_word
+from ..visualization.colors import ACUTE_FFA_PALETTE, ffa_cell_color
 from ._common import (
     DATA_ROOT,
     RESULTS_ROOT,
@@ -63,6 +65,20 @@ from ._common import (
     preprocess_all,
     write_breathing_outputs,
 )
+
+
+def _acute_population_palette():
+    """Map each acute P22 ``group_label(geno, 22, treatment_word(t))`` to its
+    color from ``ACUTE_FFA_PALETTE``. Acute cohort is P22-only."""
+    out: dict[str, str] = {}
+    for geno_display, geno_key in (("WT", "WT"), ("Scn1a+/-", "het")):
+        for treatment in ("Vehicle", "FFA"):
+            label = group_label(geno_display, 22, treatment_word(treatment))
+            out[label] = ffa_cell_color(geno_key, 22, treatment)
+    return out
+
+
+_EXP3_POPULATION_PALETTE = _acute_population_palette()
 
 
 logger = logging.getLogger(__name__)
@@ -94,12 +110,12 @@ def run(
         )
         return
 
-    # Item E: plotly HTML -> interactive_root; everything else -> pub_root.
-    traces_dir = pub_root / "trace_plots"
+    # Section 1 layout: plotly HTML -> interactive_root; everything else
+    # lives directly under pub_root (no plots/ wrapper, no stats/ subfolder).
+    traces_dir = pub_root / "Trace_plots"
     interactive_dir = interactive_root
-    ictal_histograms_dir = pub_root / "Ictal_Histograms"
-    # Item F: pooled per-group ictal histograms live under plots/.
-    population_ictal_dir = pub_root / "plots" / "Ictal_Histograms_population"
+    ictal_histograms_dir = pub_root / "Histograms_ictal_individual"
+    population_ictal_dir = pub_root / "Histograms_ictal_population"
 
     if do_preprocess:
         recordings = preprocess_all(
@@ -115,6 +131,8 @@ def run(
             interactive_dir=interactive_dir,
             ictal_histograms_dir=ictal_histograms_dir,
             population_ictal_dir=population_ictal_dir,
+            population_palette=_EXP3_POPULATION_PALETTE,
+            population_ictal_layout="exp3",
         )
         write_breathing_outputs(breathing_df, apnea_df, pub_root)
     elif (pub_root / "breathing_analysis_results.csv").exists():
@@ -130,15 +148,16 @@ def run(
             merged,
             condition_col="treatment_clean",
             condition_levels=("FFA", "Vehicle"),
+            run_gee=False,
+            run_developmental=False,
+            run_across_periods_dependent=False,
         )
-        stats_dir = pub_root / "stats"
-        stats_dir.mkdir(parents=True, exist_ok=True)
-        write_stats_xlsx(rows, stats_dir / "statistical_results.xlsx")
+        pub_root.mkdir(parents=True, exist_ok=True)
+        write_stats_xlsx(rows, pub_root / "statistical_results.xlsx")
 
     if do_plots:
         merged = prepare_breathing_data(breathing_df, load_data_log())
-        plot_dir = pub_root / "plots"
-        plot_dir.mkdir(parents=True, exist_ok=True)
+        pub_root.mkdir(parents=True, exist_ok=True)
         postictal_data = load_period_data_for_bins(
             recordings, preprocessed_dir, "Immediate Postictal",
         )
@@ -149,17 +168,22 @@ def run(
         baseline_ttot = baseline_median_ttot_by_basename(
             recordings, preprocessed_dir, config,
         )
+        # Section 1.3 exp3: skip within-age strips and within timeseries
+        # (acute cohort is P22-only); still emit per-period _across strips.
         generate_publication_plots(
-            merged, plot_dir,
+            merged, pub_root,
             condition_col="treatment_clean",
             postictal_period_data=postictal_data,
             ictal_period_data=ictal_data,
             metadata_for_bins=bin_meta,
             baseline_median_ttot_ms=baseline_ttot,
             palette=ACUTE_FFA_PALETTE,
+            do_within=False,
+            do_timeseries_within=False,
         )
-        # plot_ffa_subgroups is intentionally NOT called for exp3 (acute
-        # single-age cohort would render degenerate / redundant panels).
+        # plot_ffa_subgroups / plot_ffa_per_period_strips are intentionally
+        # NOT called for exp3 (the acute single-age cohort would render
+        # degenerate / redundant panels — Section 1.3 exp3).
 
 
 if __name__ == "__main__":  # pragma: no cover

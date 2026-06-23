@@ -37,6 +37,7 @@ from ._common import (
 )
 from .colors import (
     DEFAULT_PALETTE,
+    DS_PALE_ORANGE,
     HR_TIMESERIES_PALETTE,
     MARKERS_BY_AGE,
     TREATMENT_PALETTE,
@@ -64,10 +65,12 @@ def plot_across_periods(
     *,
     condition_col: str = "risk_clean",
     palette: Optional[Dict[Tuple[str, str], str]] = None,
+    do_timeseries_across: bool = True,
+    do_timeseries_within: bool = True,
 ) -> Optional[Path]:
     """Generate ``_across`` and ``_within`` timeseries plots for one parameter.
-    Returns the path to ``_across`` (or ``_within`` if P22 cohort is empty;
-    ``None`` if both are empty).
+    Returns the path to ``_across`` (or ``_within`` if across is skipped or
+    empty; ``None`` if both are empty).
 
     ``palette`` is only consulted by the ``condition_col == "treatment_clean"``
     branch of ``_draw_across`` (acute vs chronic visual differentiation);
@@ -77,24 +80,26 @@ def plot_across_periods(
     out_path: Optional[Path] = None
 
     # ---- across (P22 only) -------------------------------------------------
-    p22 = data[data["age_clean"] == 22]
-    if not p22.empty:
-        out_path = _draw_across(
-            p22, parameter, condition_col=condition_col,
-            output_path=output_dir / f"Timeseries_{filename_slug(parameter)}_across.png",
-            palette=palette,
-        )
+    if do_timeseries_across:
+        p22 = data[data["age_clean"] == 22]
+        if not p22.empty:
+            out_path = _draw_across(
+                p22, parameter, condition_col=condition_col,
+                output_path=output_dir / f"Timeseries_{filename_slug(parameter)}_across.png",
+                palette=palette,
+            )
 
     # ---- within (high-risk / FFA-cohort, P19 vs P22) ------------------------
-    high = _high_values(condition_col)
-    hr = data[data[condition_col].astype(str).isin(high)]
-    if not hr.empty:
-        within_path = _draw_within(
-            hr, parameter, condition_col=condition_col,
-            output_path=output_dir / f"Timeseries_{filename_slug(parameter)}_within.png",
-        )
-        if out_path is None:
-            out_path = within_path
+    if do_timeseries_within:
+        high = _high_values(condition_col)
+        hr = data[data[condition_col].astype(str).isin(high)]
+        if not hr.empty:
+            within_path = _draw_within(
+                hr, parameter, condition_col=condition_col,
+                output_path=output_dir / f"Timeseries_{filename_slug(parameter)}_within.png",
+            )
+            if out_path is None:
+                out_path = within_path
     return out_path
 
 
@@ -106,8 +111,8 @@ def plot_across_periods(
 # LR Scn1a+/- P22 (pale red, o), connected across the four named periods.
 # ---------------------------------------------------------------------------
 _DEVELOPMENTAL_TS_GROUPS: Tuple[Tuple[str, str, str, str, str], ...] = (
-    (group_label("Scn1a+/-", 19, "HR"), "het", "high_risk", "#FF0000", MARKERS_BY_AGE[19]),
-    (group_label("Scn1a+/-", 22, "LR"), "het", "low_risk",  "#FFA07A", MARKERS_BY_AGE[22]),
+    (group_label("Scn1a+/-", 19, "HR"), "het", "high_risk", DS_PALE_ORANGE, MARKERS_BY_AGE[19]),
+    (group_label("Scn1a+/-", 22, "LR"), "het", "low_risk",  DS_PALE_ORANGE, MARKERS_BY_AGE[22]),
 )
 
 # Mirrors publication_plots._detect_parameters (kept inline to avoid a
@@ -117,9 +122,9 @@ _DEVELOPMENTAL_TS_PARAMS: Tuple[str, ...] = (
     "mean_ti_ms_no_apnea", "mean_te_ms_no_apnea",
     "mean_pif_centered_ml_s", "mean_pef_centered_ml_s", "mean_pif_to_pef_ml_s",
     "mean_tv_ml", "sigh_rate_per_min", "mean_sigh_duration_ms",
-    "cov_instant_freq", "alternate_cov", "pif_to_pef_cov",
+    "cov", "pif_to_pef_cov",
     "apnea_rate_per_min", "apnea_mean_ms_imputed",
-    "apnea_burden_ms_per_min",
+    "apnea_burden_s_per_min",
 )
 
 
@@ -171,12 +176,13 @@ def _draw_across(
         # across is P22-only; full 3-feature label genotype -> P22 -> drug.
         # exp3 (acute) injects ACUTE_FFA_PALETTE via the palette kwarg;
         # exp2 (chronic) leaves palette=None and gets TREATMENT_PALETTE.
+        # Markers carry the treatment dimension: Vehicle -> o, FFA -> ^.
         eff_palette = palette or TREATMENT_PALETTE
         groups = [
-            (group_label("WT", 22, treatment_word("Vehicle")),       "WT",  "Vehicle", eff_palette[("WT",  "Vehicle")], "o"),
-            (group_label("WT", 22, treatment_word("FFA")),           "WT",  "FFA",     eff_palette[("WT",  "FFA")],     "o"),
-            (group_label("Scn1a+/-", 22, treatment_word("Vehicle")), "het", "Vehicle", eff_palette[("het", "Vehicle")], "o"),
-            (group_label("Scn1a+/-", 22, treatment_word("FFA")),     "het", "FFA",     eff_palette[("het", "FFA")],     "o"),
+            (group_label("WT", 22, treatment_word("Vehicle")),       "WT",  "Vehicle", eff_palette[("WT",  "Vehicle")], MARKERS_BY_AGE[22]),
+            (group_label("WT", 22, treatment_word("FFA")),           "WT",  "FFA",     eff_palette[("WT",  "FFA")],     MARKERS_BY_AGE[22]),
+            (group_label("Scn1a+/-", 22, treatment_word("Vehicle")), "het", "Vehicle", eff_palette[("het", "Vehicle")], MARKERS_BY_AGE[22]),
+            (group_label("Scn1a+/-", 22, treatment_word("FFA")),     "het", "FFA",     eff_palette[("het", "FFA")],     MARKERS_BY_AGE[22]),
         ]
     else:
         groups = [

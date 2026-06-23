@@ -1,13 +1,12 @@
 """
 Publication plots for experiment 4 (P19 het: survivors vs eventual SUDEP).
 
-Two plot families, mirroring the exp1 / exp2 publication layout but with
-``sudep_status`` (survivor vs sudep) as the categorical splitter:
+Two plot families, using Section 1 folder layout:
 
-  - ``Within each time period/<DisplayPeriod>_<param>_survival.png``
+  - ``Time_period_<period>/<DisplayPeriod>_<param>_survival.png``
     Strip plot, two cells (Survivor green / SUDEP red), per (period, parameter).
 
-  - ``Across time periods/Timeseries_<param>_survival.png``
+  - ``Time_periods_all/Timeseries_<param>_survival.png``
     Connected-line timeseries with two traces, per parameter.
 
 All subjects are P19 het, so markers are ``^`` (the package-wide P19 marker).
@@ -34,9 +33,10 @@ from ._common import (
     group_label,
     make_axes,
     save_figure,
+    two_line_label,
     within_style_params,
 )
-from .colors import italicize_scn1a
+from .colors import DS_PALE_ORANGE, italicize_scn1a
 
 
 _PERIODS_TO_PLOT = ("Baseline", "Ictal", "Immediate Postictal", "Recovery")
@@ -52,7 +52,7 @@ _PERIOD_LABELS_TS = ("Baseline", "Ictal", "Postictal", "Recovery")
 # (matching colors.py's HR Scn1a #FF0000 and LR Scn1a #FFA07A); pale red is the
 # lower-risk outcome (survivor) and full red is the higher-risk outcome (SUDEP),
 # mirroring the LR/HR convention used elsewhere in the package.
-_SURVIVOR_COLOR = "#FFA07A"
+_SURVIVOR_COLOR = DS_PALE_ORANGE
 _SUDEP_COLOR = "#FF0000"
 _MARKER = "^"     # all subjects are P19
 
@@ -61,9 +61,9 @@ _PARAMETERS = (
     "mean_ti_ms_no_apnea", "mean_te_ms_no_apnea",
     "mean_pif_centered_ml_s", "mean_pef_centered_ml_s", "mean_pif_to_pef_ml_s",
     "mean_tv_ml", "sigh_rate_per_min", "mean_sigh_duration_ms",
-    "cov_instant_freq", "alternate_cov", "pif_to_pef_cov",
+    "cov", "pif_to_pef_cov",
     "apnea_rate_per_min", "apnea_mean_ms_imputed",
-    "apnea_burden_ms_per_min",
+    "apnea_burden_s_per_min",
 )
 
 _FIG_SIZE_STRIP = (7, 10)
@@ -100,18 +100,20 @@ def plot_survivor_publication(
         parameters = [p for p in _PARAMETERS if p in merged.columns]
 
     saved: List[Path] = []
-    within_dir = output_dir / "Within each time period"
-    across_dir = output_dir / "Across time periods"
+    across_dir = output_dir / "Time_periods_all"
 
     # Within-period strips emit BOTH apnea-duration variants (V1 real,
     # >=1-apnea only + V2 imputed); the across timeseries uses the real
     # durations only — same V1/V2 split as the exp1/exp2 publication bundle.
+    # Per-period strips land in Section 1's per-period folders directly
+    # under ``output_dir``.
     for param in within_style_params(parameters):
-        ylim = _ylim_across_periods(merged, param)
         for period in _PERIODS_TO_PLOT:
+            ylim = _ylim_for_period(merged, param, period)
+            period_dir = output_dir / f"Time_period_{_PERIOD_DISPLAY[period].lower()}"
             path = _draw_within_period(
                 merged, param, period,
-                output_path=within_dir / f"{_PERIOD_DISPLAY[period]}_{filename_slug(param)}_survival.png",
+                output_path=period_dir / f"{_PERIOD_DISPLAY[period]}_{filename_slug(param)}_survival.png",
                 ylim=ylim,
             )
             if path is not None:
@@ -126,19 +128,16 @@ def plot_survivor_publication(
     return saved
 
 
-def _ylim_across_periods(data: pd.DataFrame, parameter: str) -> Optional[Tuple[float, float]]:
+def _ylim_for_period(
+    data: pd.DataFrame, parameter: str, period: str,
+) -> Optional[Tuple[float, float]]:
+    """Per-period y limits for survivor strip plots (both sudep_status groups)."""
     if parameter not in data.columns:
         return None
-    values: List[float] = []
-    for period in _PERIODS_TO_PLOT:
-        col = data.loc[data["period"] == period, parameter]
-        values.extend(col.dropna().tolist())
+    values = data.loc[data["period"] == period, parameter].dropna().tolist()
     if not values:
         return None
-    # Imputed apnea mean + apnea burden anchor at 0; the real-duration
-    # ``apnea_mean_ms`` (V1) is autoscaled and gets the 400 ms reference
-    # line as its floor anchor instead (Item B).
-    _zero_anchored = {"apnea_mean_ms_imputed", "apnea_burden_ms_per_min"}
+    _zero_anchored = {"apnea_mean_ms_imputed", "apnea_burden_s_per_min"}
     if parameter in _zero_anchored:
         y_min, y_max = 0.0, float(max(values))
     else:
@@ -207,9 +206,9 @@ def _draw_within_period(
     ax.set_xticks([0, 1])
     ax.set_xlim(-0.6, 1.4)
     ax.set_xticklabels(
-        [italicize_scn1a(group_label("Scn1a+/-", 19, "survivor")),
-         italicize_scn1a(group_label("Scn1a+/-", 19, "SUDEP"))],
-        fontsize=_TICK_FONTSIZE,
+        [italicize_scn1a(two_line_label(group_label("Scn1a+/-", 19, "survivor"))),
+         italicize_scn1a(two_line_label(group_label("Scn1a+/-", 19, "SUDEP")))],
+        fontsize=_TICK_FONTSIZE, ha="center",
     )
     ax.xaxis.set_tick_params(rotation=45)
     ax.spines["top"].set_visible(False)

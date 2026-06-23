@@ -8,7 +8,7 @@ breath_metrics module docstring for the underlying rationale):
   means are no longer skewed by long apneic Ttots.
 * ``Pauses_duration`` carries the imputed apnea mean
   (``apnea_mean_ms_imputed``) plus the new aggregate
-  ``apnea_burden_ms_per_min``. Both are apnea-time measures, so grouping
+  ``apnea_burden_s_per_min``. Both are apnea-time measures, so grouping
   them in the same FDR family is the natural fit.
 
 The original columns (``mean_ttot_ms``, ``apnea_mean_ms``, etc.) remain in the
@@ -37,11 +37,10 @@ _CATEGORIES: Dict[str, Tuple[str, ...]] = {
     ),
     "Pauses_duration": (
         "apnea_mean_ms_imputed",
-        "apnea_burden_ms_per_min",
+        "apnea_burden_s_per_min",
     ),
     "Irregularity_frequency": (
-        "cov_instant_freq",
-        "alternate_cov",
+        "cov",
     ),
     "Amplitudes": (
         "mean_pif_centered_ml_s",

@@ -48,7 +48,9 @@ from ..visualization import (
     draw_developmental_timeseries,
     plot_developmental_comparison,
 )
+from ..visualization._common import group_label
 from ..visualization.binned_plots import plot_ictal_binned, plot_postictal_binned
+from ..visualization.colors import DS_PALE_ORANGE
 from ._common import (
     DATA_ROOT,
     RESULTS_ROOT,
@@ -59,6 +61,12 @@ from ._common import (
     metadata_for_bins,
     preprocess_all,
 )
+
+
+_EXP1B_POPULATION_PALETTE = {
+    group_label("Scn1a+/-", 19, "HR"): DS_PALE_ORANGE,
+    group_label("Scn1a+/-", 22, "LR"): DS_PALE_ORANGE,
+}
 
 
 logger = logging.getLogger(__name__)
@@ -103,10 +111,11 @@ def run(
     recordings = load_recordings_for_experiment1b(data_root=data_root)
     logger.info("experiment 1b: %d developmental recordings", len(recordings))
 
-    traces_dir = pub_root / "trace_plots"
+    # Section 1 layout: every artifact lives directly under pub_root.
+    traces_dir = pub_root / "Trace_plots"
     interactive_dir = interactive_root
-    ictal_histograms_dir = pub_root / "Ictal_Histograms"
-    population_ictal_dir = pub_root / "plots" / "Ictal_Histograms_population"
+    ictal_histograms_dir = pub_root / "Histograms_ictal_individual"
+    population_ictal_dir = pub_root / "Histograms_ictal_population"
 
     exp1_breathing_csv = exp1_pub / "breathing_analysis_results.csv"
     if not exp1_breathing_csv.exists():
@@ -133,6 +142,8 @@ def run(
             interactive_dir=interactive_dir,
             ictal_histograms_dir=ictal_histograms_dir,
             population_ictal_dir=population_ictal_dir,
+            population_palette=_EXP1B_POPULATION_PALETTE,
+            population_ictal_layout="single",
         )
 
     merged = prepare_breathing_data(breathing_df, load_data_log())
@@ -151,18 +162,16 @@ def run(
             run_survival=False,
             run_across_periods=False,
         )
-        stats_dir = pub_root / "stats"
-        stats_dir.mkdir(parents=True, exist_ok=True)
-        write_stats_xlsx(rows, stats_dir / "statistical_results.xlsx")
+        pub_root.mkdir(parents=True, exist_ok=True)
+        write_stats_xlsx(rows, pub_root / "statistical_results.xlsx")
 
     if do_plots:
-        plot_dir = pub_root / "plots"
-        plot_dir.mkdir(parents=True, exist_ok=True)
-        # within-style strip (HR P19 vs LR P22) — reuse the exp1 driver.
-        plot_developmental_comparison(merged, plot_dir / "HR P19 vs LR P22")
-        # across-periods timeseries — net-new 2-trace driver.
-        draw_developmental_timeseries(merged, plot_dir / "Across time periods")
-        # binned line plots — net-new 2-group "developmental" variant.
+        pub_root.mkdir(parents=True, exist_ok=True)
+        # Within-style strips: per-period folders under pub_root.
+        plot_developmental_comparison(merged, pub_root)
+        # Across-periods timeseries — net-new 2-trace driver.
+        draw_developmental_timeseries(merged, pub_root / "Time_periods_all")
+        # Binned line plots — net-new 2-group "developmental" variant.
         postictal_data = load_period_data_for_bins(
             recordings, preprocessed_dir, "Immediate Postictal",
         )
@@ -174,12 +183,12 @@ def run(
             recordings, preprocessed_dir, config,
         )
         plot_postictal_binned(
-            postictal_data, bin_meta, plot_dir / "Postictal_Binned",
+            postictal_data, bin_meta, pub_root / "Binned_postictal",
             condition_col="developmental",
             baseline_median_ttot_ms=baseline_ttot,
         )
         plot_ictal_binned(
-            ictal_data, bin_meta, plot_dir / "Ictal_Binned",
+            ictal_data, bin_meta, pub_root / "Binned_ictal",
             condition_col="developmental",
             baseline_median_ttot_ms=baseline_ttot,
         )

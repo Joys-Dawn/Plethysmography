@@ -62,7 +62,14 @@ class LidDetectionConfig:
     min_spike_distance_ms: float = 1.0
     long_run_min_duration_s: float = 5.0           # plateau-end detection threshold (Pass 1 addition)
     baseline_shift_sigma_threshold: float = 0.5
+    shift_cluster_gap_s: float = 60.0              # pass1b: collapse one transition into one candidate
+    pass2_short_window_s: float = 10.0             # reject plateau-continuation false edges
+    pass2_short_shift_floor: float = 3.0           # |short pre-post mean delta| below this -> drop
     pair_close_window_s: float = 900.0             # 15 min default; 5 min for one specific file (see metadata.py)
+    pair_min_open_close_s: float = 120.0           # open and close cannot be same transition edge
+    pair_min_plateau_delta: float = 5.0            # close must move to a different amplitude plateau
+    plateau_measure_offset_s: float = 30.0         # measure post-event plateau after this delay
+    plateau_measure_window_s: float = 45.0
     boundary_walk_threshold: float = 5.0           # |signal - local_mean| threshold while walking
     boundary_walk_offset_samples: int = 1000       # additional offset away from spike after walking
     boundary_walk_local_mean_samples: int = 250    # window for the local mean used during walk

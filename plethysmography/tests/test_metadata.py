@@ -48,6 +48,7 @@ def test_is_excluded_period_specific():
 
 def test_lid_overrides_have_expected_shapes():
     assert get_lid_override("250307 4051 p22")["type"] == "hardcoded_spike_times"
+    assert get_lid_override("042826 5609 p22")["type"] == "hardcoded_spike_times"
     assert get_lid_override("250304 4056 p22")["type"] == "first_pair_close_window_s"
     assert get_lid_override("250423 4269 p22")["type"] == "keep_only_index"
     assert get_lid_override("nonexistent") is None

@@ -1,18 +1,24 @@
 """
 Tests for the shared label helpers added in Item C:
-``_common.group_label`` and ``_common.treatment_word``.
+``_common.group_label``, ``_common.two_line_label``, and
+``_common.treatment_word``.
 
 The canonical group label is always ``"<Geno> P<age> <COND>"`` (genotype ->
-age -> condition). The literal ``Scn1a+/-`` must survive verbatim so the
-downstream ``colors.italicize_scn1a`` still renders it as
-``$\\mathit{Scn1a}^{+/-}$``.
+age -> condition). The literal ``Scn1a+/-`` must survive verbatim through
+``group_label`` so the downstream ``colors.italicize_scn1a`` can swap it for
+the shorter ``DS`` display abbreviation at the last moment before the
+label hits matplotlib.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from plethysmography.visualization._common import group_label, treatment_word
+from plethysmography.visualization._common import (
+    group_label,
+    treatment_word,
+    two_line_label,
+)
 from plethysmography.visualization.colors import italicize_scn1a
 
 
@@ -72,14 +78,32 @@ def test_group_label_age_none_or_empty_omits_age():
     assert group_label("WT", None, "LR") == "WT LR"
 
 
-def test_group_label_scn1a_literal_preserved_for_italicize():
-    """The literal ``Scn1a+/-`` must remain intact so the downstream
-    matplotlib mathtext substitution still fires."""
+def test_group_label_scn1a_literal_preserved_for_display_substitution():
+    """The literal ``Scn1a+/-`` must remain intact in the internal label so
+    the downstream ``italicize_scn1a`` substitution can swap it for the
+    shorter ``DS`` (Dravet Syndrome) abbreviation."""
     label = group_label("Scn1a+/-", 22, "LR")
     assert "Scn1a+/-" in label
-    assert italicize_scn1a(label) == r"$\mathit{Scn1a}^{+/-}$ P22 LR"
+    assert italicize_scn1a(label) == "DS P22 LR"
     # WT labels are untouched by italicize_scn1a
     assert italicize_scn1a(group_label("WT", 22, "LR")) == "WT P22 LR"
+
+
+# ---------------------------------------------------------------------------
+# two_line_label — first-space split for crowded within-period strip x-ticks
+# ---------------------------------------------------------------------------
+def test_two_line_label_splits_at_first_space():
+    """Genotype goes on line 1, age + condition tail on line 2."""
+    assert two_line_label("WT P22 LR") == "WT\nP22 LR"
+    assert two_line_label("Scn1a+/- P22 HR") == "Scn1a+/-\nP22 HR"
+    # Two-part labels still split, putting genotype alone on top
+    assert two_line_label("WT P22") == "WT\nP22"
+
+
+def test_two_line_label_passes_through_single_token():
+    """A label without spaces has no split point and is returned unchanged."""
+    assert two_line_label("WT") == "WT"
+    assert two_line_label("") == ""
 
 
 # ---------------------------------------------------------------------------

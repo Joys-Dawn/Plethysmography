@@ -31,10 +31,9 @@ Frequency:
   comparable as "same metric, different filter".
 
 Variability:
-  - ``cov_instant_freq``: SD/mean of instantaneous breathing frequency
-    (1000/Ttot in Hz, computed across all breaths).
-  - ``alternate_cov``: mean of |D_n − D_{n+1}| / D_{n+1} for successive
-    Ttot values (per old code's "alternate" CoV).
+  - ``cov``: mean of |D_n − D_{n+1}| / D_{n+1} for successive Ttot values
+    (the legacy "alternate" CoV — the only CoV reported now that the
+    instantaneous-frequency variant has been dropped).
   - ``pif_to_pef_cov``: SD/mean of peak_diff = PEF − PIF.
 
 Apnea extensions:
@@ -42,9 +41,9 @@ Apnea extensions:
     detected; otherwise the mean of the longest min(10, n) Ttot values
     in the period (a defensible "worst-breath" proxy that keeps every
     trace in the comparison even when no formal apneas were detected).
-  - ``apnea_burden_ms_per_min``: total time spent in detected apneas
-    expressed per minute of period duration. Always uses the *real*
-    apnea durations (no imputation).
+  - ``apnea_burden_s_per_min``: total time spent in detected apneas
+    expressed in seconds per minute of period duration. Always uses the
+    *real* apnea durations (no imputation).
 """
 
 from __future__ import annotations
@@ -124,22 +123,14 @@ def compute_breath_metrics(
     mean_frequency_bpm = (n / period_duration_s) * 60.0 if period_duration_s > 0 else 0.0
 
     # Variability.
-    inst_freq_hz = 1000.0 / ttot[ttot > 0] if (ttot > 0).any() else np.array([])
-    if inst_freq_hz.size > 0:
-        mean_freq_hz = float(np.mean(inst_freq_hz))
-        std_freq_hz = float(np.std(inst_freq_hz))
-        cov_instant_freq = std_freq_hz / mean_freq_hz if mean_freq_hz else float("nan")
-    else:
-        cov_instant_freq = float("nan")
-
     if n > 1:
         rel_diffs = []
         for i in range(n - 1):
             if ttot[i + 1] > 0:
                 rel_diffs.append(abs((ttot[i] - ttot[i + 1]) / ttot[i + 1]))
-        alternate_cov = float(np.mean(rel_diffs)) if rel_diffs else float("nan")
+        cov = float(np.mean(rel_diffs)) if rel_diffs else float("nan")
     else:
-        alternate_cov = float("nan")
+        cov = float("nan")
 
     valid_pd = peak_diff[np.isfinite(peak_diff)]
     if valid_pd.size > 0:
@@ -173,9 +164,13 @@ def compute_breath_metrics(
             top_k = np.sort(finite_ttot)[-k:]
             apnea_mean_imputed = float(np.mean(top_k))
 
-    # Project extension: apnea burden (ms of detected apnea per minute of period).
+    # Project extension: apnea burden (seconds of detected apnea per minute
+    # of period). ``apnea_durations`` is in ms; divide by 1000 to express in
+    # seconds and scale by 60/period_s to normalize to a per-minute rate.
     if period_duration_s > 0 and apnea_durations.size > 0:
-        apnea_burden = float(np.sum(apnea_durations)) * 60.0 / period_duration_s
+        apnea_burden = (
+            float(np.sum(apnea_durations)) / 1000.0 * 60.0 / period_duration_s
+        )
     else:
         apnea_burden = 0.0
 
@@ -194,8 +189,7 @@ def compute_breath_metrics(
         mean_tv_ml=float(np.mean(tv)) if tv.size > 0 else 0.0,
         sigh_rate_per_min=sigh_rate,
         mean_sigh_duration_ms=mean_sigh_dur_ms,
-        cov_instant_freq=cov_instant_freq,
-        alternate_cov=alternate_cov,
+        cov=cov,
         pif_to_pef_cov=pif_to_pef_cov,
         apnea_rate_per_min=apnea_rate,
         apnea_mean_ms=float(np.mean(apnea_durations)) if apnea_durations.size > 0 else float("nan"),
@@ -208,7 +202,7 @@ def compute_breath_metrics(
         mean_ti_ms_no_apnea=mean_ti_no_apnea,
         mean_te_ms_no_apnea=mean_te_no_apnea,
         apnea_mean_ms_imputed=apnea_mean_imputed,
-        apnea_burden_ms_per_min=apnea_burden,
+        apnea_burden_s_per_min=apnea_burden,
     )
 
 
@@ -229,8 +223,7 @@ def _empty_metrics(file_basename: str, period_name: str, period_duration_s: floa
         mean_tv_ml=0.0,
         sigh_rate_per_min=0.0,
         mean_sigh_duration_ms=nan,
-        cov_instant_freq=nan,
-        alternate_cov=nan,
+        cov=nan,
         pif_to_pef_cov=nan,
         apnea_rate_per_min=0.0,
         apnea_mean_ms=nan,
@@ -243,5 +236,5 @@ def _empty_metrics(file_basename: str, period_name: str, period_duration_s: floa
         mean_ti_ms_no_apnea=nan,
         mean_te_ms_no_apnea=nan,
         apnea_mean_ms_imputed=nan,
-        apnea_burden_ms_per_min=0.0,
+        apnea_burden_s_per_min=0.0,
     )

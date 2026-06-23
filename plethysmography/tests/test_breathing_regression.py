@@ -72,7 +72,7 @@ _FREE_COLUMNS = {
     # test by accident.
     "mean_ttot_ms_no_apnea", "mean_frequency_bpm_no_apnea",
     "mean_ti_ms_no_apnea", "mean_te_ms_no_apnea",
-    "apnea_mean_ms_imputed", "apnea_burden_ms_per_min",
+    "apnea_mean_ms_imputed", "apnea_burden_s_per_min",
 }
 
 

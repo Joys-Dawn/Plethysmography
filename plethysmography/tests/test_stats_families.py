@@ -63,7 +63,7 @@ def test_extension_columns_are_in_their_expected_categories():
     assert inverse["mean_ttot_ms_no_apnea"] == "Timing"
     assert inverse["mean_frequency_bpm_no_apnea"] == "Timing"
     assert inverse["apnea_mean_ms_imputed"] == "Pauses_duration"
-    assert inverse["apnea_burden_ms_per_min"] == "Pauses_duration"
+    assert inverse["apnea_burden_s_per_min"] == "Pauses_duration"
     # And the legacy columns must NOT be in any FDR family (otherwise they
     # would compete for the same correction with their replacements).
     for legacy in (

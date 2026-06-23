@@ -24,7 +24,13 @@ from ..stats import (
     run_statistics,
     write_stats_xlsx,
 )
-from ..visualization import generate_publication_plots, plot_ffa_subgroups
+from ..visualization import (
+    generate_publication_plots,
+    plot_ffa_per_period_strips,
+    plot_ffa_subgroups,
+)
+from ..visualization._common import group_label, treatment_word
+from ..visualization.colors import TREATMENT_PALETTE, ffa_cell_color
 from ._common import (
     DATA_ROOT,
     RESULTS_ROOT,
@@ -36,6 +42,22 @@ from ._common import (
     preprocess_all,
     write_breathing_outputs,
 )
+
+
+def _chronic_population_palette():
+    """Map every chronic ``group_label(geno, age, treatment_word(t))`` to its
+    color from ``TREATMENT_PALETTE``. Covers both ages (the chronic cohort
+    spans P19 + P22)."""
+    out: dict[str, str] = {}
+    for geno_display, geno_key in (("WT", "WT"), ("Scn1a+/-", "het")):
+        for age in (19, 22):
+            for treatment in ("Vehicle", "FFA"):
+                label = group_label(geno_display, age, treatment_word(treatment))
+                out[label] = ffa_cell_color(geno_key, age, treatment)
+    return out
+
+
+_EXP2_POPULATION_PALETTE = _chronic_population_palette()
 
 
 logger = logging.getLogger(__name__)
@@ -61,12 +83,12 @@ def run(
     recordings = load_recordings_for_experiment(EXPERIMENT_ID, data_root=data_root)
     logger.info("experiment 2: %d recordings loaded", len(recordings))
 
-    # Item E: plotly HTML -> interactive_root; everything else -> pub_root.
-    traces_dir = pub_root / "trace_plots"
+    # Section 1 layout: plotly HTML -> interactive_root; everything else
+    # lives directly under pub_root (no plots/ wrapper, no stats/ subfolder).
+    traces_dir = pub_root / "Trace_plots"
     interactive_dir = interactive_root
-    ictal_histograms_dir = pub_root / "Ictal_Histograms"
-    # Item F: pooled per-group ictal histograms live under plots/.
-    population_ictal_dir = pub_root / "plots" / "Ictal_Histograms_population"
+    ictal_histograms_dir = pub_root / "Histograms_ictal_individual"
+    population_ictal_dir = pub_root / "Histograms_ictal_population"
 
     if do_preprocess:
         recordings = preprocess_all(
@@ -82,6 +104,8 @@ def run(
             interactive_dir=interactive_dir,
             ictal_histograms_dir=ictal_histograms_dir,
             population_ictal_dir=population_ictal_dir,
+            population_palette=_EXP2_POPULATION_PALETTE,
+            population_ictal_layout="exp2",
         )
         write_breathing_outputs(breathing_df, apnea_df, pub_root)
     elif (pub_root / "breathing_analysis_results.csv").exists():
@@ -98,14 +122,12 @@ def run(
             condition_col="treatment_clean",
             condition_levels=("FFA", "Vehicle"),
         )
-        stats_dir = pub_root / "stats"
-        stats_dir.mkdir(parents=True, exist_ok=True)
-        write_stats_xlsx(rows, stats_dir / "statistical_results.xlsx")
+        pub_root.mkdir(parents=True, exist_ok=True)
+        write_stats_xlsx(rows, pub_root / "statistical_results.xlsx")
 
     if do_plots:
         merged = prepare_breathing_data(breathing_df, load_data_log())
-        plot_dir = pub_root / "plots"
-        plot_dir.mkdir(parents=True, exist_ok=True)
+        pub_root.mkdir(parents=True, exist_ok=True)
         postictal_data = load_period_data_for_bins(
             recordings, preprocessed_dir, "Immediate Postictal",
         )
@@ -116,15 +138,24 @@ def run(
         baseline_ttot = baseline_median_ttot_by_basename(
             recordings, preprocessed_dir, config,
         )
+        # P22 across strips / timeseries duplicate the by_age facet outputs;
+        # keep only the within-age panels in the plain Time_period_* folders
+        # and Timeseries_*_within in Time_periods_all/.
         generate_publication_plots(
-            merged, plot_dir,
+            merged, pub_root,
             condition_col="treatment_clean",
             postictal_period_data=postictal_data,
             ictal_period_data=ictal_data,
             metadata_for_bins=bin_meta,
             baseline_median_ttot_ms=baseline_ttot,
+            do_across_strips=False,
+            do_timeseries_across=False,
         )
-        plot_ffa_subgroups(merged, plot_dir / "FFA")
+        # Section 1.3 exp2: P22 across-period FFA timeseries land in
+        # Time_periods_all_by_{age,drug,genotype}/ and per-period facet
+        # strips land in Time_period_<period>_by_{age,drug,genotype}/.
+        plot_ffa_subgroups(merged, pub_root)
+        plot_ffa_per_period_strips(merged, pub_root)
 
 
 if __name__ == "__main__":  # pragma: no cover

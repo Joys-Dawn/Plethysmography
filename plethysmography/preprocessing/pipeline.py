@@ -18,8 +18,9 @@ import numpy as np
 import pandas as pd
 
 from ..core.config import PlethConfig
-from ..core.data_models import LidEvents, Period, Recording
-from ..core.metadata import get_preprocess_override, should_skip_preprocess
+from ..core.data_models import BASELINE, LidEvents, Period, Recording
+from ..core.errors import MissingBaselineError, PreprocessingError
+from ..core.metadata import get_preprocess_override, should_skip_preprocess, excluded_from_all_analysis
 from ..data_loading.edf_reader import read_edf_signal
 from ..data_loading.lid_detection import detect_lid_events
 from .artifacts import remove_artifacts_from_period
@@ -85,13 +86,11 @@ def preprocess_recording(
         config=config.period,
     )
 
-    if not periods:
-        n_events = len(lid_events.adjusted_spike_times_s)
-        logger.warning(
-            "preprocess: %s produced 0 periods (lid detection found %d event(s); "
-            "need 4 for full slicing). Signal mean=%.2f std=%.4f. "
-            "If these look anomalous compared to siblings, the EDF may be corrupted.",
-            recording.file_basename, n_events, float(np.mean(signal)), float(np.std(signal)),
+    if not excluded_from_all_analysis(recording.file_basename):
+        _require_baseline_period(
+            recording.file_basename,
+            periods,
+            lid_events,
         )
 
     periods = [filter_period(p, config.filter) for p in periods]
@@ -151,3 +150,25 @@ def _remove_segment_between_first_pair(
         adjusted_spike_times_s=lid_events.adjusted_spike_times_s[2:],
     )
     return new_signal, new_time, new_lid
+
+
+def _require_baseline_period(
+    file_basename: str,
+    periods: List[Period],
+    lid_events: LidEvents,
+) -> None:
+    if any(p.name == BASELINE for p in periods):
+        return
+    if not periods:
+        raise PreprocessingError(
+            f"{file_basename}: lid detection produced 0 periods "
+            f"({len(lid_events.adjusted_spike_times_s)} spike(s); need 4 for "
+            f"full slicing). Cannot continue."
+        )
+    raise MissingBaselineError(
+        f"{file_basename}: no Baseline period after lid detection "
+        f"(periods={[p.name for p in periods]}; "
+        f"raw spikes={[round(t, 1) for t in lid_events.raw_spike_times_s]}; "
+        f"adjusted={[round(t, 1) for t in lid_events.adjusted_spike_times_s]}). "
+        f"All downstream metrics would be invalid."
+    )

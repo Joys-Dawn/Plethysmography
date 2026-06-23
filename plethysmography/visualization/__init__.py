@@ -29,6 +29,7 @@ from .trace_plots import plot_lid_spikes, plot_periods_overlay
 from .publication_plots import (
     generate_publication_plots,
     plot_developmental_comparison,
+    plot_ffa_per_period_strips,
     plot_ffa_subgroups,
 )
 from .survivor_plots import plot_survivor_publication
@@ -55,6 +56,7 @@ __all__ = [
     "plot_periods_overlay",
     "generate_publication_plots",
     "plot_developmental_comparison",
+    "plot_ffa_per_period_strips",
     "plot_ffa_subgroups",
     "plot_survivor_publication",
 ]
